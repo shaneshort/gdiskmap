@@ -1,0 +1,53 @@
+# The reference host's bay labels and unusable bays, as configured after
+# calibration (see doc/calibration.md).
+
+[[enclosure]]
+id = "0x500605b0013ca580"
+
+  [enclosure.slots]
+  0 = "16"
+  1 = "17"
+  2 = "18"
+  3 = "19"
+  4 = "20"
+  5 = "21"
+  6 = "22"
+  7 = "23"
+
+  [enclosure.unusable]
+  4 = "10k+ link errors with an untested disk; precautionary"
+
+[[enclosure]]
+id = "0x500605b005ea4a10"
+
+  [enclosure.slots]
+  0 = "0"
+  1 = "1"
+  2 = "2"
+  3 = "3"
+  4 = "4"
+  5 = "5"
+  6 = "6"
+  7 = "7"
+
+  [enclosure.unusable]
+  0 = "backplane connector retention clip broken"
+  1 = "backplane connector retention clip broken"
+  2 = "backplane connector retention clip broken"
+  3 = "backplane connector retention clip broken"
+
+[[enclosure]]
+id = "0x500605b0071f24b0"
+
+  [enclosure.slots]
+  0 = "8"
+  1 = "9"
+  2 = "10"
+  3 = "11"
+  4 = "12"
+  5 = "13"
+  6 = "14"
+  7 = "15"
+
+  [enclosure.unusable]
+  4 = "37M link errors with a known-good disk"

@@ -1,7 +1,6 @@
 package zfs
 
 import (
-	"slices"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -120,14 +119,5 @@ func TestLocation(t *testing.T) {
 		if got := tc.v.Location(); got != tc.want {
 			t.Errorf("%+v.Location() = %q, want %q", tc.v, got, tc.want)
 		}
-	}
-}
-
-func TestNaturalCompare(t *testing.T) {
-	got := []string{"mirror-10", "mirror-9", "mirror-1", "a", "mirror-01", "b2", "b10"}
-	slices.SortStableFunc(got, naturalCompare)
-	want := []string{"a", "b2", "b10", "mirror-1", "mirror-01", "mirror-9", "mirror-10"}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("sort with naturalCompare mismatch (-want +got):\n%s", diff)
 	}
 }

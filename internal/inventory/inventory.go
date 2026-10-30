@@ -11,6 +11,7 @@ import (
 
 	"github.com/shaneshort/gdiskmap/internal/layout"
 	"github.com/shaneshort/gdiskmap/internal/mpt"
+	"github.com/shaneshort/gdiskmap/internal/natsort"
 	"github.com/shaneshort/gdiskmap/internal/sysfs"
 	"github.com/shaneshort/gdiskmap/internal/zfs"
 )
@@ -18,7 +19,9 @@ import (
 // Inventory is the merged view of every controller slot.
 type Inventory struct {
 	Controllers []Controller `json:"controllers"`
-	// Slots lists every known slot, ordered by controller, enclosure and
+	// Slots lists every known slot. If any slot has a configured label,
+	// slots are ordered by label in natural order (bay 9 before bay 10),
+	// which follows the front panel; otherwise by controller, enclosure and
 	// slot number. A slot the firmware reports more than one device in
 	// appears once per device.
 	Slots []Slot `json:"slots"`
@@ -165,6 +168,10 @@ func Build(src Sources) *Inventory {
 	if src.WholeDisk != nil {
 		inv.PoolsKnown = true
 		inv.addPoolMembership(src.Vdevs, src.WholeDisk)
+	}
+	if slices.ContainsFunc(inv.Slots, func(s Slot) bool { return s.Label != s.DefaultLabel }) {
+		// Unlabelled slots ("c0:s3") sort after numeric bay labels.
+		slices.SortStableFunc(inv.Slots, func(a, b Slot) int { return natsort.Compare(a.Label, b.Label) })
 	}
 	return inv
 }

@@ -102,18 +102,19 @@ func TestBuild(t *testing.T) {
 		got = append(got, r)
 	}
 	// Controller c0 has a firmware enclosure list, so all eight slots
-	// appear; c1 does not, so only its occupied slot is known.
+	// appear; c1 does not, so only its occupied slot is known. One slot has
+	// a configured label, so slots are ordered by label.
 	want := []row{
 		{Label: "c0:s0", Default: "c0:s0", Block: "sda", Pools: 1},
 		{Label: "c0:s1", Default: "c0:s1"},
 		{Label: "c0:s2", Default: "c0:s2"},
 		{Label: "c0:s3", Default: "c0:s3"},
-		{Label: "front-5", Default: "c0:s4", Block: "sdh", LinkErrors: 10924},
 		{Label: "c0:s5", Default: "c0:s5"},
 		{Label: "c0:s6", Default: "c0:s6"},
 		{Label: "c0:s7", Default: "c0:s7"},
 		{Label: "c1:s30", Default: "c1:s30", Block: "sdm", Pools: 1},
 		{Label: "c1:s30", Default: "c1:s30", Block: "sdn"},
+		{Label: "front-5", Default: "c0:s4", Block: "sdh", LinkErrors: 10924},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Build() slots mismatch (-want +got):\n%s", diff)
@@ -168,7 +169,7 @@ func TestSelect(t *testing.T) {
 		{[]string{"sdo"}, []string{"c1:sdo sdo"}},
 		{[]string{"sda", "c0:s0", "c0:s1"}, []string{"c0:s0 sda", "c0:s1"}},
 		{[]string{"empty"}, []string{"c0:s1", "c0:s2", "c0:s3", "c0:s5", "c0:s6", "c0:s7"}},
-		{[]string{"occupied"}, []string{"c0:s0 sda", "c0:s4 sdh", "c1:s30 sdm", "c1:s30 sdn", "c1:sdo sdo"}},
+		{[]string{"occupied"}, []string{"c0:s0 sda", "c1:s30 sdm", "c1:s30 sdn", "c0:s4 sdh", "c1:sdo sdo"}},
 	}
 	for _, tc := range tests {
 		slots, err := inv.Select(tc.targets, fakeWholeDisk)

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -294,5 +295,34 @@ func TestUnusableCommand(t *testing.T) {
 		if code, _, _ := runCLI(t, append([]string{"-root", dir, "-config", cfg}, args...)...); code != 2 {
 			t.Errorf("gdiskmap %q: exit status %d, want 2", args, code)
 		}
+	}
+}
+
+var update = flag.Bool("update", false, "rewrite golden files in testdata")
+
+// TestReferenceHost replays a capture of the reference host (made with
+// `gdiskmap dump`) with its bay label config, and compares the output with
+// a golden file. Run `go test -update` to rewrite the golden file after an
+// intended output change.
+func TestReferenceHost(t *testing.T) {
+	code, stdout, stderr := runCLI(t, "-root", "testdata/pve", "-config", "testdata/pve.toml", "disks")
+	if code != 0 {
+		t.Fatalf("gdiskmap disks: exit status %d, stderr:\n%s", code, stderr)
+	}
+	if stderr != "" {
+		t.Errorf("gdiskmap disks stderr = %q, want none", stderr)
+	}
+	golden := filepath.Join("testdata", "pve-disks.golden")
+	if *update {
+		if err := os.WriteFile(golden, []byte(stdout), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatalf("reading golden file (run with -update to create it): %v", err)
+	}
+	if stdout != string(want) {
+		t.Errorf("gdiskmap disks output differs from %s:\ngot:\n%s\nwant:\n%s", golden, stdout, want)
 	}
 }

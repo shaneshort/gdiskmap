@@ -1,0 +1,25 @@
+BAY  SLOT   DEVICE  MODEL             SERIAL              SIZE    POOL     VDEV      STATE   LINK ERRS
+0    c2:s0  -       (unusable)        -                   -       -        -         -
+1    c2:s1  -       (unusable)        -                   -       -        -         -
+2    c2:s2  -       (unusable)        -                   -       -        -         -
+3    c2:s3  -       (unusable)        -                   -       -        -         -
+4    c2:s4  sdr     CT2000BX500SSD1   2307E6AB41B3        2.0T    archive  mirror-2  ONLINE
+5    c2:s5  sdq     Samsung SSD 850   S2PWNX0J607907M     1.0T    storage  mirror-1  ONLINE
+6    c2:s6  sdp     Samsung SSD 850   S2PWNX0J607894Y     1.0T    storage  mirror-0  ONLINE
+7    c2:s7  sdo     INTEL SSDSC2KG24  PHYG006400D2240AGN  240.1G  rpool    mirror-0  ONLINE
+8    c1:s0  sdl     Samsung SSD 850   S2PWNX0J609991W     1.0T    storage  mirror-3  ONLINE
+9    c1:s1  sdh     ST2000NX0433      S460S1XQ            2.0T    archive  mirror-0  ONLINE
+10   c1:s2  sdn     Samsung SSD 850   S2PWNX0J609944V     1.0T    storage  mirror-1  ONLINE
+11   c1:s3  sdk     Samsung SSD 850   S2PWNX0J609948H     1.0T    storage  mirror-2  ONLINE
+12   c1:s4  -       (unusable)        -                   -       -        -         -
+13   c1:s5  sdi     ST2000NX0433      S460RY46            2.0T    archive  mirror-3  ONLINE
+14   c1:s6  sdj     ST2000NX0433      S460RYVC            2.0T    archive  mirror-1  ONLINE
+15   c1:s7  sdm     Samsung SSD 850   S2PWNX0J607893A     1.0T    storage  mirror-0  ONLINE
+16   c0:s0  sda     ST2000NX0433      S460S1L7            2.0T    archive  mirror-0  ONLINE
+17   c0:s1  sdc     Samsung SSD 850   S2PWNX0J609986X     1.0T    storage  mirror-2  ONLINE
+18   c0:s2  sdd     ST2000NX0433      S460RYB4            2.0T    archive  mirror-3  ONLINE
+19   c0:s3  sdb     CT2000BX500SSD1   2245E6823C14        2.0T    archive  mirror-2  ONLINE
+20   c0:s4  -       (unusable)        -                   -       -        -         -
+21   c0:s5  sdg     CT2000BX500SSD1   2245E6823BFF        2.0T    archive  mirror-1  ONLINE
+22   c0:s6  sdf     Samsung SSD 850   S2PWNX0J610092K     1.0T    storage  mirror-3  ONLINE
+23   c0:s7  sde     INTEL SSDSC2KG24  PHYG006400DA240AGN  240.1G  rpool    mirror-0  ONLINE

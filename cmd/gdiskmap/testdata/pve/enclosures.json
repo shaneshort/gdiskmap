@@ -1,0 +1,26 @@
+{
+  "0": [
+    {
+      "handle": 1,
+      "logicalId": 5766302626387633536,
+      "startSlot": 0,
+      "numSlots": 8
+    }
+  ],
+  "1": [
+    {
+      "handle": 1,
+      "logicalId": 5766302626486363312,
+      "startSlot": 0,
+      "numSlots": 8
+    }
+  ],
+  "2": [
+    {
+      "handle": 1,
+      "logicalId": 5766302626466122256,
+      "startSlot": 0,
+      "numSlots": 8
+    }
+  ]
+}
