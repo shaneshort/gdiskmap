@@ -41,7 +41,7 @@ gdiskmap [flags] [command] [arguments]
 | `disks [-json] [-leds]` | List every slot with its disk, pool membership and link errors. The default command. `-leds` also reads each slot's LED state, which sends one MPI request per slot. |
 | `locate on\|off <target>...` | Turn the identify LED on or off. |
 | `fault on\|off <target>...` | Turn the fault LED on or off. |
-| `calibrate [-group-size N] [-confirm-all] [controller...]` | Build the bay label config interactively. See [doc/calibration.md](doc/calibration.md). |
+| `calibrate [-group-size N] [-confirm-all] [-light-empty] [controller...]` | Build the bay label config interactively. See [doc/calibration.md](doc/calibration.md). |
 | `dump <dir>` | Capture the data gdiskmap reads, for bug reports and offline replay. |
 | `help` | Show usage. |
 

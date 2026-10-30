@@ -28,7 +28,8 @@ Commands:
                                   reads each slot's LED state from the controller.
   locate on|off <target>...       Turn the identify (locate) LED on or off.
   fault on|off <target>...        Turn the fault LED on or off.
-  calibrate [flags] [controller]  Build the bay label config by lighting slots and
+  calibrate [-group-size N] [-confirm-all] [-light-empty] [controller...]
+                                  Build the bay label config by lighting slots and
                                   asking which bay is lit.
   dump <dir>                      Capture the data gdiskmap reads into <dir>, for
                                   bug reports and offline replay with -root.

@@ -22,6 +22,9 @@ func cmdCalibrate(e *env, args []string) error {
 	fl := newFlagSet("calibrate")
 	groupSize := fl.Int("group-size", 4, "")
 	confirmAll := fl.Bool("confirm-all", false, "")
+	// Many SGPIO backplanes light only occupied bays, so empty slots are
+	// mapped by inference unless the user says their LEDs work.
+	lightEmpty := fl.Bool("light-empty", false, "")
 	if err := parseFlags(fl, args); err != nil {
 		return err
 	}
@@ -38,7 +41,14 @@ func cmdCalibrate(e *env, args []string) error {
 	encls := make([]layout.CalibrationEnclosure, len(targets))
 	calibrated := make(map[uint64]bool)
 	for i, t := range targets {
-		encls[i] = layout.CalibrationEnclosure{ID: t.enc.ID, Slots: t.slots}
+		encls[i] = layout.CalibrationEnclosure{ID: t.enc.ID, Slots: t.slots, Hidden: make(map[int]bool)}
+		if !*lightEmpty {
+			for _, n := range t.slots {
+				if s := findSlot(sys.inv, t.controller, t.enclosure, n); s == nil || s.Disk == nil {
+					encls[i].Hidden[n] = true
+				}
+			}
+		}
 		calibrated[t.enc.ID] = true
 	}
 	// Bay numbers labelled in other enclosures must not be reused.
@@ -56,6 +66,9 @@ func cmdCalibrate(e *env, args []string) error {
 
 	fmt.Fprintf(e.stdout, "Calibrating %d enclosure(s). Each prompt lights one slot's locate LED.\n", len(targets))
 	fmt.Fprintln(e.stdout, "Answer with the bay number you see lit, 's' to skip a slot whose LED you cannot see, or 'q' to stop.")
+	if !*lightEmpty {
+		fmt.Fprintln(e.stdout, "Empty slots are not lit; their bays are inferred from the pattern (use -light-empty if your backplane lights empty bays).")
+	}
 	p := newTerminalPrompter(e, sys, targets)
 	p.start()
 	result, quit, err := layout.Calibrate(encls, p, layout.CalibrateOptions{
@@ -81,7 +94,11 @@ func cmdCalibrate(e *env, args []string) error {
 				fmt.Fprintf(e.stdout, "    slot %d: (not mapped)\n", slot)
 				continue
 			}
-			fmt.Fprintf(e.stdout, "    slot %d: bay %d\n", slot, bay)
+			note := ""
+			if encls[i].Hidden[slot] {
+				note = " (empty, inferred)"
+			}
+			fmt.Fprintf(e.stdout, "    slot %d: bay %d%s\n", slot, bay, note)
 			total++
 		}
 	}
@@ -204,9 +221,15 @@ func (p *terminalPrompter) stop() {
 // slot returns the inventory slot a calibration reference refers to.
 func (p *terminalPrompter) slot(ref layout.SlotRef) *inventory.Slot {
 	t := p.targets[ref.Enclosure]
-	for i := range p.sys.inv.Slots {
-		s := &p.sys.inv.Slots[i]
-		if s.Controller == t.controller && s.Enclosure == t.enclosure && s.Number == ref.Slot {
+	return findSlot(p.sys.inv, t.controller, t.enclosure, ref.Slot)
+}
+
+// findSlot returns the first slot with the given controller, enclosure and
+// number, or nil.
+func findSlot(inv *inventory.Inventory, controller, enclosure, number int) *inventory.Slot {
+	for i := range inv.Slots {
+		s := &inv.Slots[i]
+		if s.Controller == controller && s.Enclosure == enclosure && s.Number == number {
 			return s
 		}
 	}

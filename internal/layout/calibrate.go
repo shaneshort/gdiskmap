@@ -52,6 +52,10 @@ type Prompter interface {
 type CalibrationEnclosure struct {
 	ID    uint64
 	Slots []int // In ascending order.
+	// Hidden holds slots whose LED cannot be shown, such as empty bays on
+	// backplanes that light only occupied bays. They are never prompted and
+	// are mapped only from a pattern confirmed on other slots of their group.
+	Hidden map[int]bool
 }
 
 // CalibrateOptions controls calibration.
@@ -80,6 +84,8 @@ var errQuit = errors.New("calibration stopped")
 // Each following group is predicted to continue the previous group's bay
 // numbers in the same direction, again confirmed with one prompt. A rejected
 // prediction falls back to asking about each remaining slot of the group.
+// Hidden slots are never shown; they are filled in from a confirmed pattern,
+// or left unmapped if their group has none.
 //
 // The result holds one slot-to-bay map per enclosure. quit reports that the
 // user stopped early; the result then holds the mappings made so far.
@@ -95,7 +101,7 @@ func Calibrate(encls []CalibrationEnclosure, p Prompter, opts CalibrateOptions) 
 	for ei, e := range encls {
 		result[ei] = make(map[int]int)
 		for start := 0; start < len(e.Slots); start += opts.GroupSize {
-			g := group{enclosure: ei, slots: e.Slots[start:min(start+opts.GroupSize, len(e.Slots))]}
+			g := group{enclosure: ei, slots: e.Slots[start:min(start+opts.GroupSize, len(e.Slots))], hidden: e.Hidden}
 			err := c.calibrateGroup(g, result[ei])
 			if errors.Is(err, errQuit) {
 				return result, true, nil
@@ -112,6 +118,12 @@ func Calibrate(encls []CalibrationEnclosure, p Prompter, opts CalibrateOptions) 
 type group struct {
 	enclosure int
 	slots     []int
+	hidden    map[int]bool // Keyed by slot number.
+}
+
+// visible reports whether the i-th slot of g can be shown to the user.
+func (g group) visible(i int) bool {
+	return !g.hidden[g.slots[i]]
 }
 
 func (g group) ref(i int) SlotRef {
@@ -152,7 +164,7 @@ func (c *calibrator) calibrateGroup(g group, out map[int]int) error {
 		if next.step < 0 {
 			next.base = c.prevMax + len(g.slots)
 		}
-		if ok, err := c.tryLine(g, next, known); err != nil || ok {
+		if ok, err := c.tryLine(g, next, known, false); err != nil || ok {
 			return err
 		}
 	}
@@ -162,7 +174,7 @@ func (c *calibrator) calibrateGroup(g group, out map[int]int) error {
 		if len(known) == 2 {
 			break
 		}
-		if _, ok := known[i]; ok {
+		if _, ok := known[i]; ok || !g.visible(i) {
 			continue
 		}
 		if err := c.ask(g, i, known); err != nil {
@@ -170,29 +182,44 @@ func (c *calibrator) calibrateGroup(g group, out map[int]int) error {
 		}
 	}
 	if l, ok := fitLine(known); ok {
-		if ok, err := c.tryLine(g, l, known); err != nil || ok {
+		if ok, err := c.tryLine(g, l, known, true); err != nil || ok {
 			return err
 		}
 	}
 
-	// No usable pattern: ask about every remaining slot.
+	// No confirmed pattern: ask about every remaining visible slot, then
+	// fill in hidden slots if the answers form a line.
 	for i := range g.slots {
-		if _, ok := known[i]; ok {
+		if _, ok := known[i]; ok || !g.visible(i) {
 			continue
 		}
 		if err := c.ask(g, i, known); err != nil {
 			return err
 		}
 	}
+	if l, ok := fitLine(known); ok {
+		for i := range g.slots {
+			if _, ok := known[i]; ok || g.visible(i) {
+				continue
+			}
+			if b := l.bay(i); b >= 0 && !c.used[b] {
+				c.record(i, b, known)
+			}
+		}
+	}
 	return nil
 }
 
 // tryLine predicts the unknown slots of g from l and verifies the
-// prediction: the last unknown slot (or, with ConfirmAll, every unknown
-// slot) is shown for confirmation. It reports whether the prediction was
-// accepted and every slot is now known. A rejection records any correction
-// in known and returns false.
-func (c *calibrator) tryLine(g group, l line, known map[int]int) (bool, error) {
+// prediction: the last unknown visible slot (or, with ConfirmAll, every
+// unknown visible slot) is shown for confirmation. It reports whether the
+// prediction was accepted and every slot is now known. A rejection records
+// any correction in known and returns false.
+//
+// fitted reports that l was fitted to at least two answers in g. If no
+// unknown slot is visible, such a line is accepted without a prompt, while a
+// prediction from the previous group cannot be verified and is rejected.
+func (c *calibrator) tryLine(g group, l line, known map[int]int, fitted bool) (bool, error) {
 	var unknown []int
 	for i := range g.slots {
 		if _, ok := known[i]; ok {
@@ -207,9 +234,24 @@ func (c *calibrator) tryLine(g group, l line, known map[int]int) (bool, error) {
 	if len(unknown) == 0 {
 		return true, nil
 	}
-	verify := unknown[len(unknown)-1:]
+	var visible []int
+	for _, i := range unknown {
+		if g.visible(i) {
+			visible = append(visible, i)
+		}
+	}
+	if len(visible) == 0 {
+		if !fitted {
+			return false, nil
+		}
+		for _, i := range unknown {
+			c.record(i, l.bay(i), known)
+		}
+		return true, nil
+	}
+	verify := visible[len(visible)-1:]
 	if c.opts.ConfirmAll {
-		verify = unknown
+		verify = visible
 	}
 	for _, i := range verify {
 		r, err := c.p.ConfirmBay(g.ref(i), l.bay(i))
@@ -285,6 +327,11 @@ func (c *calibrator) record(i, bay int, known map[int]int) {
 // do not prevent this, but a group whose known bays do not follow a straight
 // line clears the prediction.
 func (c *calibrator) learn(g group, known map[int]int) {
+	if len(known) == 0 {
+		// Nothing was learned, e.g. every slot was hidden; keep predicting
+		// from the last group that taught something.
+		return
+	}
 	l, ok := fitLine(known)
 	if !ok {
 		c.prev = nil

@@ -20,6 +20,7 @@ Flags:
 |---|---|---|
 | `-group-size N` | 4 | Number of consecutive slots that share a numbering pattern, normally the lanes of one connector (SFF-8087/SFF-8643 carry 4). |
 | `-confirm-all` | off | Confirm every predicted bay instead of one per group. |
+| `-light-empty` | off | Also light empty slots. By default they are never shown, because many SGPIO backplanes (including the reference host's) light only occupied bays; their bays are inferred from the pattern instead. |
 
 At each prompt, answer with:
 
@@ -63,8 +64,14 @@ in bay `base + step × i`, where `step` is +1 or −1.
    back to asking about the rest of that group slot by slot. The next group
    learns its pattern afresh.
 
-A skipped slot is filled in from a confirmed pattern. This lets empty bays
-whose LEDs do not light still receive a label.
+Empty slots are not shown (unless `-light-empty` is given). They are filled
+in from the pattern of their group once it has been confirmed on occupied
+slots, and the result marks them "(empty, inferred)". A group with no
+occupied slot cannot be confirmed, so its slots stay unmapped; label them by
+editing the config, or calibrate again once a disk is in the group.
+
+A slot you skip is treated the same way: it is filled in from a confirmed
+pattern, but never from an unconfirmed one.
 
 On a controller with eight slots in two reversed connectors (the common
 case), calibration takes four prompts: two answers and a confirmation for the
