@@ -73,8 +73,9 @@ func slotRange(start, n int) []int {
 	return s
 }
 
-// reversedPerConnector is the reference host's numbering: within each
-// 4-slot connector the firmware counts backwards relative to the bays.
+// reversedPerConnector is a numbering in which each 4-slot connector counts
+// backwards relative to the bays, as a backplane wired with crossed lanes
+// would.
 func reversedPerConnector(firstBay int) map[int]int {
 	m := make(map[int]int)
 	for s := range 8 {

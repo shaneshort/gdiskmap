@@ -73,10 +73,10 @@ editing the config, or calibrate again once a disk is in the group.
 A slot you skip is treated the same way: it is filled in from a confirmed
 pattern, but never from an unconfirmed one.
 
-On a controller with eight slots in two reversed connectors (the common
-case), calibration takes four prompts: two answers and a confirmation for the
-first connector, and one confirmation for the second. Each further controller
-numbered continuously takes two.
+On a controller with eight slots in two connectors whose numbering follows a
+consistent pattern, calibration takes four prompts: two answers and a
+confirmation for the first connector, and one confirmation for the second.
+Each further controller numbered continuously takes two.
 
 The confirmation checks one predicted slot per group. A group whose numbering
 differs from the prediction only in slots that are not shown would be

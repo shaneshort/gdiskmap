@@ -61,9 +61,11 @@ direct-attach SGPIO backplanes, no expanders, no SES devices).
   `0x44332211<phy>000000`, which repeats on every controller. Disks are keyed
   by (enclosure logical ID, slot) and matched to ZFS by resolving
   `/dev/disk/by-id` links, never by SAS address.
-- **Slot numbers do not follow front-panel order.** Within each 4-lane
-  connector the firmware numbers slots in reverse (phy 0 → slot 3 … phy 3 →
-  slot 0, phy 4 → slot 7 … phy 7 → slot 4). A label mapping is required.
+- **Slot numbers do not identify front-panel bays.** Slots are numbered per
+  controller, and which bays a controller serves depends on the cabling. On
+  the reference host the firmware maps phys to slots in reverse within each
+  4-lane connector (phy 0 → slot 3 … phy 3 → slot 0, phy 4 → slot 7 … phy 7
+  → slot 4), while slots follow the bay order. A label mapping is required.
 - **Firmware slot tables can be wrong.** One card carried a generic NVDATA
   image that assigned duplicate slots (28–31) to both connectors. The
   duplicate is reported as a warning.

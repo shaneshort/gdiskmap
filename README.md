@@ -106,9 +106,10 @@ Notes on the output:
 
 ## Bay labels
 
-Slot numbers rarely match the front-panel bay numbers; on common backplanes
-the firmware numbers each 4-lane connector in reverse. The optional config
-maps slots to labels:
+Slot numbers are per controller (each starts again at 0), so they rarely
+match front-panel bay numbers, and the controller-to-backplane cabling
+decides which bays each controller serves. The optional config maps slots to
+labels:
 
 ```toml
 [[enclosure]]
