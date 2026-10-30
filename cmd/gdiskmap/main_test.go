@@ -10,6 +10,8 @@ import (
 
 	"gdiskmap/internal/inventory"
 	"gdiskmap/internal/layout"
+	"gdiskmap/internal/mpt"
+	"gdiskmap/internal/sysfs"
 )
 
 // writeCapture writes a capture directory, as `gdiskmap dump` produces, for
@@ -224,5 +226,31 @@ func TestCalibrationTargets(t *testing.T) {
 	}
 	if _, err := calibrationTargets(inv, []string{"c2"}); err == nil {
 		t.Error("calibrationTargets(enclosure not read from firmware) error = nil, want error")
+	}
+}
+
+func TestAddress(t *testing.T) {
+	disk := &inventory.Disk{Device: sysfs.Device{Handle: 0x0e, HasHandle: true}}
+	sys := &system{inv: &inventory.Inventory{Controllers: []inventory.Controller{
+		{Enclosures: []inventory.Enclosure{{Handle: 1, FromFirmware: true}}},
+		{Enclosures: []inventory.Enclosure{{Handle: 0, FromFirmware: false}}},
+	}}}
+	tests := []struct {
+		name    string
+		slot    inventory.Slot
+		want    mpt.SlotAddress
+		wantErr bool
+	}{
+		{"occupied, firmware enclosure", inventory.Slot{Controller: 0, Enclosure: 0, Number: 2, Disk: disk}, mpt.EnclosureSlotAddress(1, 2), false},
+		{"empty, firmware enclosure", inventory.Slot{Controller: 0, Enclosure: 0, Number: 6}, mpt.EnclosureSlotAddress(1, 6), false},
+		{"occupied, derived enclosure", inventory.Slot{Controller: 1, Enclosure: 0, Number: 2, Disk: disk}, mpt.DeviceAddress(0x0e), false},
+		{"unplaced disk", inventory.Slot{Controller: 1, Enclosure: -1, Number: -1, Disk: disk}, mpt.DeviceAddress(0x0e), false},
+		{"empty, derived enclosure", inventory.Slot{Controller: 1, Enclosure: 0, Number: 3}, mpt.SlotAddress{}, true},
+	}
+	for _, tc := range tests {
+		got, err := sys.address(&tc.slot)
+		if (err != nil) != tc.wantErr || got != tc.want {
+			t.Errorf("address(%s) = %v, %v; want %v, error %t", tc.name, got, err, tc.want, tc.wantErr)
+		}
 	}
 }

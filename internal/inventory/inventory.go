@@ -218,7 +218,7 @@ func (inv *Inventory) placeDevices(ci int, h sysfs.Host, cfg *layout.Config) {
 				}
 			case len(names) > 1:
 				inv.Warnings = append(inv.Warnings, fmt.Sprintf(
-					"%s: the controller reports %d devices in this slot (%s); its slot table is probably wrong, so address these disks by device name or serial",
+					"%s: the controller reports %d devices in this slot (%s); its slot table is probably wrong, so slot numbers and LEDs for these disks are unreliable",
 					slot.DefaultLabel, len(names), strings.Join(names, ", ")))
 			}
 		}

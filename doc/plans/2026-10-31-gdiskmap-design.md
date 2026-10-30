@@ -65,9 +65,13 @@ direct-attach SGPIO backplanes, no expanders, no SES devices).
   connector the firmware numbers slots in reverse (phy 0 → slot 3 … phy 3 →
   slot 0, phy 4 → slot 7 … phy 7 → slot 4). A label mapping is required.
 - **Firmware slot tables can be wrong.** One card carried a generic NVDATA
-  image that assigned duplicate slots (28–31) to both connectors. Addressing
-  LEDs by device handle rather than by slot keeps occupied bays reachable even
-  then; the duplicate is reported as a warning.
+  image that assigned duplicate slots (28–31) to both connectors. The
+  duplicate is reported as a warning.
+- **SEP requests must be addressed by enclosure and slot.** SAS2 IT firmware
+  on the reference host rejects read-status requests addressed by device
+  handle and ignores write-status requests addressed that way. A trace of
+  `sas2ircu LOCATE` showed it uses enclosure/slot addressing with a
+  read-modify-write of the status word.
 - **Controller numbering differs by context.** Linux SCSI host numbers, PCI
   order, and the MPI IOC number are independent. The IOC number (which
   matches `sas2ircu`'s index) is read from
@@ -127,8 +131,8 @@ separate root) so that tests can run against a captured tree on any OS.
   - `CONFIG` with action `PAGE_HEADER` or `READ_CURRENT` (used for Enclosure
     Page 0).
   - `SCSI_ENCLOSURE_PROCESSOR` with action `READ_STATUS` or `WRITE_STATUS`,
-    addressed by device handle (occupied slots) or enclosure handle + slot
-    (empty slots). Slot status bits used: `IDENTIFY_REQUEST` (0x00020000) and
+    addressed by enclosure handle + slot, or by device handle only when the
+    enclosure handle is unknown. Slot status bits used: `IDENTIFY_REQUEST` (0x00020000) and
     `PREDICTED_FAULT` (0x40).
 
   There is no general passthrough; nothing that writes firmware, NVDATA or
@@ -183,8 +187,7 @@ Targets: `sdX`, `/dev/...` (including by-id paths), serial, WWN, bay label,
 `empty`. Controllers are numbered `c0`, `c1`, ... in the order SAS2 then
 SAS3, each by IOC number, which matches the vendor tools' index on hosts
 with one HBA generation. Ambiguous targets are rejected with the
-candidates listed. Occupied slots are addressed by device handle; empty slots
-by enclosure + slot.
+candidates listed. Slots are addressed by enclosure + slot.
 
 ### `gdiskmap calibrate`
 

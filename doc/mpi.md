@@ -43,20 +43,23 @@ constants follow the kernel's `drivers/scsi/mpt3sas/mpi/` headers.
 | SCSI Enclosure Processor, action READ_STATUS | `0x18` | Read a slot's status word (`disks -leds`, and before each write). |
 | SCSI Enclosure Processor, action WRITE_STATUS | `0x18` | Set a slot's status word. |
 
-Slots holding a disk are addressed by the disk's firmware device handle
-(from `/sys/block/sdX/device/sas_device_handle`), so the firmware maps the
-device to its phy and LED itself. Empty slots are addressed by enclosure
-handle and slot number.
+Slots are addressed by enclosure handle and slot number, as `sas2ircu`
+does. The firmware device handle (from
+`/sys/block/sdX/device/sas_device_handle`) is used only for a disk whose
+enclosure handle is unknown, because SAS2 IT firmware (P20) driving an SGPIO
+backplane rejects READ_STATUS requests addressed by device handle (IOCStatus
+`0x0007`, IOCLogInfo `0x30060001`) and accepts WRITE_STATUS requests
+addressed that way without changing the LED.
+
+This was established by tracing `sas2ircu <n> LOCATE <encl>:<slot> ON`: it
+sends READ_STATUS then WRITE_STATUS, both with Flags `0x01`
+(ENCLOSURE_SLOT_ADDRESS), writing the slot's current status with the
+identify bit added (e.g. `0x00000080` becomes `0x00020080`).
 
 A write replaces the whole status word, so gdiskmap reads the status first
 and changes only the identify (`0x00020000`) or predicted-fault (`0x40`)
 bit. If the read fails, the write still happens and a warning says other
 indicators on the slot may have been cleared.
-
-SAS2 IT firmware (P20) on an SGPIO direct-attach backplane rejects
-READ_STATUS with IOCStatus `0x0007` (invalid field), IOCLogInfo
-`0x30060001`. On such controllers LED state cannot be shown, and setting one
-indicator clears the other, as it does with `sas2ircu`.
 
 Nothing that writes firmware, NVDATA or persistent configuration can be
 built; there is no general passthrough.

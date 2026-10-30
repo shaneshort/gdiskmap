@@ -258,19 +258,23 @@ func (sys *system) allSlots() []*inventory.Slot {
 	return out
 }
 
-// address returns the SEP address of a slot: the device handle of the disk
-// in it, or for an empty slot its enclosure handle and slot number.
+// address returns the SEP address of a slot. Enclosure/slot addressing is
+// preferred: SAS2 IT firmware driving an SGPIO backplane rejects read-status
+// requests addressed by device handle and accepts, but ignores, write-status
+// requests addressed that way (sas2ircu also uses enclosure/slot). The
+// device handle is used only when the enclosure handle is unknown, i.e. the
+// enclosure list could not be read from the firmware.
 func (sys *system) address(s *inventory.Slot) (mpt.SlotAddress, error) {
-	if s.Disk != nil && s.Disk.HasHandle {
-		return mpt.DeviceAddress(s.Disk.Handle), nil
-	}
 	if s.Enclosure >= 0 && s.Number >= 0 {
 		enc := sys.inv.Controllers[s.Controller].Enclosures[s.Enclosure]
 		if enc.FromFirmware {
 			return mpt.EnclosureSlotAddress(enc.Handle, uint16(s.Number)), nil
 		}
 	}
-	return mpt.SlotAddress{}, fmt.Errorf("%s: no device handle or enclosure handle to address the slot by", s.Label)
+	if s.Disk != nil && s.Disk.HasHandle {
+		return mpt.DeviceAddress(s.Disk.Handle), nil
+	}
+	return mpt.SlotAddress{}, fmt.Errorf("%s: no enclosure handle or device handle to address the slot by", s.Label)
 }
 
 // controller returns the open controller holding a slot.

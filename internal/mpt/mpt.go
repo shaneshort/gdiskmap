@@ -70,14 +70,16 @@ type SlotAddress struct {
 }
 
 // DeviceAddress addresses the slot holding the device with the given firmware
-// device handle. The firmware resolves the slot itself, so this works even if
-// the controller's slot numbering is wrong.
+// device handle. SAS2 IT firmware driving an SGPIO backplane does not act on
+// SEP requests addressed this way (it rejects reads and ignores writes), so
+// EnclosureSlotAddress is preferred whenever the enclosure handle is known.
 func DeviceAddress(devHandle uint16) SlotAddress {
 	return SlotAddress{DevHandle: devHandle}
 }
 
 // EnclosureSlotAddress addresses a slot by enclosure handle and slot number.
-// It is the only way to address an empty slot.
+// This is the addressing sas2ircu uses, and the only way to address an empty
+// slot.
 func EnclosureSlotAddress(enclosureHandle, slot uint16) SlotAddress {
 	return SlotAddress{BySlot: true, EnclosureHandle: enclosureHandle, Slot: slot}
 }

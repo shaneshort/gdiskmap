@@ -38,7 +38,7 @@ gdiskmap [flags] [command] [arguments]
 
 | Command | Description |
 |---|---|
-| `disks [-json] [-leds]` | List every slot with its disk, pool membership and link errors. The default command. `-leds` also reads each slot's LED state, which sends one MPI request per slot; some firmware (including SAS2 IT firmware on SGPIO backplanes) cannot report it. |
+| `disks [-json] [-leds]` | List every slot with its disk, pool membership and link errors. The default command. `-leds` also reads each slot's LED state, which sends one MPI request per slot. |
 | `locate on\|off <target>...` | Turn the identify LED on or off. |
 | `fault on\|off <target>...` | Turn the fault LED on or off. |
 | `calibrate [-group-size N] [-confirm-all] [controller...]` | Build the bay label config interactively. See [doc/calibration.md](doc/calibration.md). |
@@ -145,7 +145,6 @@ MPI requests sent through `/dev/mpt2ctl` or `/dev/mpt3ctl`. See
 - Direct-attach backplanes only. Disks behind SAS expanders are not
   discovered.
 - If an HBA's NVDATA carries the wrong slot table, slot numbers are wrong for
-  every tool, including this one. gdiskmap warns about duplicate slots and
-  sets LEDs by device handle, which does not depend on the slot table, but
-  empty slots on such a controller cannot be addressed reliably. The fix is
-  to flash the NVDATA that matches the card.
+  every tool, including this one, and LEDs light the wrong bays. gdiskmap
+  warns about duplicate slots. The fix is to flash the NVDATA that matches
+  the card.
