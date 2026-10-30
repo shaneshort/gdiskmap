@@ -24,8 +24,8 @@ const DefaultPath = "/etc/gdiskmap.toml"
 // ReservedLabels are target keywords that cannot be used as bay labels.
 var ReservedLabels = []string{"all", "occupied", "empty"}
 
-// Config holds bay labels keyed by enclosure logical ID and slot number.
-// The zero value is an empty configuration.
+// Config holds bay labels and unusable-bay marks keyed by enclosure logical
+// ID and slot number. The zero value is an empty configuration.
 type Config struct {
 	enclosures map[uint64]*enclosure
 }
@@ -33,14 +33,18 @@ type Config struct {
 type enclosure struct {
 	name   string
 	labels map[int]string
+	// unusable maps slots marked as unusable (e.g. a faulty backplane
+	// connector) to the reason, which may be empty.
+	unusable map[int]string
 }
 
 // fileFormat is the TOML representation of Config.
 type fileFormat struct {
 	Enclosures []struct {
-		ID    string            `toml:"id"`
-		Name  string            `toml:"name"`
-		Slots map[string]string `toml:"slots"`
+		ID       string            `toml:"id"`
+		Name     string            `toml:"name"`
+		Slots    map[string]string `toml:"slots"`
+		Unusable map[string]string `toml:"unusable"`
 	} `toml:"enclosure"`
 }
 
@@ -80,18 +84,37 @@ func Parse(data string) (*Config, error) {
 		if _, dup := c.enclosures[id]; dup {
 			return nil, fmt.Errorf("enclosure %s listed twice", e.ID)
 		}
-		c.SetName(id, e.Name)
+		if err := c.SetName(id, e.Name); err != nil {
+			return nil, fmt.Errorf("enclosure %s: %w", e.ID, err)
+		}
 		for key, label := range e.Slots {
-			slot, err := strconv.Atoi(key)
-			if err != nil || slot < 0 {
-				return nil, fmt.Errorf("enclosure %s: invalid slot number %q", e.ID, key)
+			slot, err := parseSlot(key)
+			if err != nil {
+				return nil, fmt.Errorf("enclosure %s: %w", e.ID, err)
 			}
 			if err := c.SetLabel(id, slot, label); err != nil {
 				return nil, fmt.Errorf("enclosure %s slot %d: %w", e.ID, slot, err)
 			}
 		}
+		for key, reason := range e.Unusable {
+			slot, err := parseSlot(key)
+			if err != nil {
+				return nil, fmt.Errorf("enclosure %s: %w", e.ID, err)
+			}
+			if err := c.SetUnusable(id, slot, reason); err != nil {
+				return nil, fmt.Errorf("enclosure %s slot %d: %w", e.ID, slot, err)
+			}
+		}
 	}
 	return c, nil
+}
+
+func parseSlot(key string) (int, error) {
+	slot, err := strconv.Atoi(key)
+	if err != nil || slot < 0 {
+		return 0, fmt.Errorf("invalid slot number %q", key)
+	}
+	return slot, nil
 }
 
 // ParseID parses an enclosure logical ID written as hexadecimal, with or
@@ -132,8 +155,42 @@ func (c *Config) Name(id uint64) string {
 }
 
 // SetName sets the name of an enclosure.
-func (c *Config) SetName(id uint64, name string) {
+func (c *Config) SetName(id uint64, name string) error {
+	if err := validateText("name", name); err != nil {
+		return err
+	}
 	c.enclosure(id).name = name
+	return nil
+}
+
+// Unusable reports whether a slot is marked as unusable, and the reason
+// given. A nil Config has no marks.
+func (c *Config) Unusable(id uint64, slot int) (reason string, ok bool) {
+	if c == nil {
+		return "", false
+	}
+	e, found := c.enclosures[id]
+	if !found {
+		return "", false
+	}
+	reason, ok = e.unusable[slot]
+	return reason, ok
+}
+
+// SetUnusable marks a slot as unusable. The reason may be empty.
+func (c *Config) SetUnusable(id uint64, slot int, reason string) error {
+	if err := validateText("reason", reason); err != nil {
+		return err
+	}
+	c.enclosure(id).unusable[slot] = reason
+	return nil
+}
+
+// ClearUnusable removes a slot's unusable mark, if any.
+func (c *Config) ClearUnusable(id uint64, slot int) {
+	if e, ok := c.enclosures[id]; ok {
+		delete(e.unusable, slot)
+	}
 }
 
 // SetLabel sets the label of a slot. Labels must be unique across the whole
@@ -153,7 +210,8 @@ func (c *Config) SetLabel(id uint64, slot int, label string) error {
 	return nil
 }
 
-// ClearLabels removes every slot label of an enclosure, keeping its name.
+// ClearLabels removes every slot label of an enclosure, keeping its name and
+// unusable marks.
 func (c *Config) ClearLabels(id uint64) {
 	clear(c.enclosure(id).labels)
 }
@@ -176,7 +234,7 @@ func (c *Config) enclosure(id uint64) *enclosure {
 	}
 	e, ok := c.enclosures[id]
 	if !ok {
-		e = &enclosure{labels: make(map[int]string)}
+		e = &enclosure{labels: make(map[int]string), unusable: make(map[int]string)}
 		c.enclosures[id] = e
 	}
 	return e
@@ -188,8 +246,15 @@ func validateLabel(label string) error {
 		return errors.New("label is empty")
 	case slices.Contains(ReservedLabels, label):
 		return fmt.Errorf("label %q is a reserved target keyword", label)
-	case strings.ContainsFunc(label, unicode.IsControl):
-		return fmt.Errorf("label %q contains control characters", label)
+	}
+	return validateText("label", label)
+}
+
+// validateText rejects control characters, which the TOML encoding (see
+// quote) does not escape.
+func validateText(what, s string) error {
+	if strings.ContainsFunc(s, unicode.IsControl) {
+		return fmt.Errorf("%s %q contains control characters", what, s)
 	}
 	return nil
 }
@@ -213,21 +278,26 @@ func (c *Config) Encode() string {
 			fmt.Fprintf(&b, "name = %s\n", quote(e.name))
 		}
 		b.WriteString("\n  [enclosure.slots]\n")
-		slots := make([]int, 0, len(e.labels))
-		for s := range e.labels {
-			slots = append(slots, s)
-		}
-		slices.Sort(slots)
-		for _, s := range slots {
-			fmt.Fprintf(&b, "  %d = %s\n", s, quote(e.labels[s]))
+		writeSlotTable(&b, e.labels)
+		if len(e.unusable) > 0 {
+			b.WriteString("\n  # Slots that must not be used, with the reason.\n  [enclosure.unusable]\n")
+			writeSlotTable(&b, e.unusable)
 		}
 	}
 	return b.String()
 }
 
-// quote returns s as a TOML basic string. Labels and names never contain
-// control characters (see validateLabel), so only quotes and backslashes need
-// escaping.
+// writeSlotTable writes slot = "value" lines in slot order.
+func writeSlotTable(b *strings.Builder, m map[int]string) {
+	slots := slices.Sorted(maps.Keys(m))
+	for _, s := range slots {
+		fmt.Fprintf(b, "  %d = %s\n", s, quote(m[s]))
+	}
+}
+
+// quote returns s as a TOML basic string. Labels, names and reasons never
+// contain control characters (see validateText), so only quotes and
+// backslashes need escaping.
 func quote(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }

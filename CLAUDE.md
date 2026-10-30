@@ -35,6 +35,7 @@ If there are any useful tools, resources or information I provide, update this f
 
 - Follow the Google Go style guide, especially the best practices:
   https://google.github.io/styleguide/go/best-practices.html
+- Module path: `github.com/shaneshort/gdiskmap` (repository https://github.com/shaneshort/gdiskmap.git).
 - Go 1.25 (keep `go.mod` at 1.25; `golang.org/x/sys` is pinned to a release that supports it).
 - `make test` runs the tests; `make lint` runs golangci-lint for the host and for Linux
   (the ioctl code only builds on Linux). `make build` produces static Linux binaries in `bin/`.

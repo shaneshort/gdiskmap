@@ -8,10 +8,10 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"gdiskmap/internal/layout"
-	"gdiskmap/internal/mpt"
-	"gdiskmap/internal/sysfs"
-	"gdiskmap/internal/zfs"
+	"github.com/shaneshort/gdiskmap/internal/layout"
+	"github.com/shaneshort/gdiskmap/internal/mpt"
+	"github.com/shaneshort/gdiskmap/internal/sysfs"
+	"github.com/shaneshort/gdiskmap/internal/zfs"
 )
 
 const (
@@ -215,5 +215,33 @@ func TestNewLEDState(t *testing.T) {
 	want := &LEDState{Identify: true, Fault: true, Raw: 0x00020041}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("NewLEDState() mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildUnusable(t *testing.T) {
+	cfg := &layout.Config{}
+	for _, slot := range []int{1, 4} {
+		if err := cfg.SetUnusable(encl0, slot, "connector clip broken"); err != nil {
+			t.Fatalf("SetUnusable() error: %v", err)
+		}
+	}
+	inv := Build(Sources{
+		Hosts:      testHosts()[1:], // Host 0 only.
+		Enclosures: map[int][]mpt.Enclosure{0: {{Handle: 1, LogicalID: encl0, NumSlots: 8}}},
+		Layout:     cfg,
+	})
+	var unusable []string
+	for _, s := range inv.Slots {
+		if s.Unusable {
+			unusable = append(unusable, s.DefaultLabel+" "+s.UnusableReason)
+		}
+	}
+	want := []string{"c0:s1 connector clip broken", "c0:s4 connector clip broken"}
+	if diff := cmp.Diff(want, unusable); diff != "" {
+		t.Errorf("Build() unusable slots mismatch (-want +got):\n%s", diff)
+	}
+	// Slot 4 holds sdh, which must be warned about.
+	if len(inv.Warnings) != 1 || !strings.Contains(inv.Warnings[0], "unusable") || !strings.Contains(inv.Warnings[0], "sdh") {
+		t.Errorf("Build() warnings = %q, want one about sdh in an unusable bay", inv.Warnings)
 	}
 }

@@ -16,8 +16,8 @@ import (
 	"io"
 	"os"
 
-	"gdiskmap/internal/layout"
-	"gdiskmap/internal/mpt"
+	"github.com/shaneshort/gdiskmap/internal/layout"
+	"github.com/shaneshort/gdiskmap/internal/mpt"
 )
 
 const usageText = `Usage: gdiskmap [flags] [command] [arguments]
@@ -31,6 +31,9 @@ Commands:
   calibrate [-group-size N] [-confirm-all] [-light-empty] [controller...]
                                   Build the bay label config by lighting slots and
                                   asking which bay is lit.
+  unusable on|off [-reason text] <target>...
+                                  Mark bays as unusable (e.g. a faulty backplane
+                                  connector) in the bay label config, or clear the mark.
   dump <dir>                      Capture the data gdiskmap reads into <dir>, for
                                   bug reports and offline replay with -root.
   help                            Show this help.
@@ -84,6 +87,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		err = cmdLED(e, rest, "fault", mpt.StatusPredictedFault)
 	case "calibrate":
 		err = cmdCalibrate(e, rest)
+	case "unusable":
+		err = cmdUnusable(e, rest)
 	case "dump":
 		err = cmdDump(e, rest)
 	case "help":

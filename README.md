@@ -23,6 +23,7 @@ depends on `sas2ircu`.
 ## Building
 
 ```sh
+git clone https://github.com/shaneshort/gdiskmap.git && cd gdiskmap
 make build        # bin/gdiskmap-linux-amd64 and bin/gdiskmap-linux-arm64
 make test lint    # tests and golangci-lint
 ```
@@ -42,6 +43,7 @@ gdiskmap [flags] [command] [arguments]
 | `locate on\|off <target>...` | Turn the identify LED on or off. |
 | `fault on\|off <target>...` | Turn the fault LED on or off. |
 | `calibrate [-group-size N] [-confirm-all] [-light-empty] [controller...]` | Build the bay label config interactively. See [doc/calibration.md](doc/calibration.md). |
+| `unusable on\|off [-reason text] <target>...` | Mark bays as unusable in the config (e.g. a faulty backplane connector), or clear the mark. |
 | `dump <dir>` | Capture the data gdiskmap reads, for bug reports and offline replay. |
 | `help` | Show usage. |
 
@@ -124,6 +126,20 @@ name = "front"              # Optional
 Labels must be unique, and `all`, `occupied` and `empty` are reserved.
 `gdiskmap calibrate` writes this file for you; see
 [doc/calibration.md](doc/calibration.md).
+
+Bays that must not be used, such as those behind a faulty backplane
+connector, can be marked with a reason:
+
+```toml
+  [enclosure.unusable]
+  0 = "backplane connector clip broken"
+```
+
+`gdiskmap unusable on -reason "backplane connector clip broken" 0 1 2 3`
+writes these entries (flags go before the targets), and
+`gdiskmap unusable off <target>...` removes them. `disks` shows an empty
+unusable bay as `(unusable)` and warns about a disk in one, and `calibrate`
+never lights unusable bays.
 
 ## Capturing and replaying
 

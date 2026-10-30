@@ -11,10 +11,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gdiskmap/internal/capture"
-	"gdiskmap/internal/inventory"
-	"gdiskmap/internal/mpt"
-	"gdiskmap/internal/output"
+	"github.com/shaneshort/gdiskmap/internal/capture"
+	"github.com/shaneshort/gdiskmap/internal/inventory"
+	"github.com/shaneshort/gdiskmap/internal/mpt"
+	"github.com/shaneshort/gdiskmap/internal/output"
 )
 
 // newFlagSet returns a flag set for a subcommand that reports errors as
@@ -130,6 +130,63 @@ func describeSlot(s *inventory.Slot) string {
 		return s.Label
 	}
 	return fmt.Sprintf("%s (%s)", s.Label, strings.Join(details, ", "))
+}
+
+// cmdUnusable implements `gdiskmap unusable`, which marks slots as unusable
+// (or clears the mark) in the layout config.
+func cmdUnusable(e *env, args []string) error {
+	const usage = "usage: gdiskmap unusable on|off [-reason text] <target>..."
+	if len(args) < 1 || (args[0] != "on" && args[0] != "off") {
+		return usageError{usage}
+	}
+	on := args[0] == "on"
+	fl := newFlagSet("unusable")
+	reason := fl.String("reason", "", "")
+	if err := parseFlags(fl, args[1:]); err != nil {
+		return err
+	}
+	if fl.NArg() == 0 {
+		return usageError{usage}
+	}
+	if !on && *reason != "" {
+		return usageError{"unusable off does not take -reason"}
+	}
+	sys, err := gather(e, e.liveFS(), gatherOptions{})
+	if err != nil {
+		return err
+	}
+	defer sys.close()
+	slots, err := sys.inv.Select(fl.Args(), sys.wholeDisk)
+	if err != nil {
+		return err
+	}
+	for _, s := range slots {
+		if s.Enclosure < 0 {
+			return fmt.Errorf("%s has no known slot to mark", describeSlot(s))
+		}
+		id := sys.inv.Controllers[s.Controller].Enclosures[s.Enclosure].ID
+		if on {
+			if err := sys.cfg.SetUnusable(id, s.Number, *reason); err != nil {
+				return err
+			}
+			if s.Disk != nil {
+				fmt.Fprintf(e.stderr, "gdiskmap: warning: %s holds a disk\n", describeSlot(s))
+			}
+		} else {
+			sys.cfg.ClearUnusable(id, s.Number)
+		}
+		fmt.Fprintf(e.stdout, "%s: unusable %s\n", describeSlot(s), args[0])
+	}
+	backup, err := sys.cfg.Save(e.configPath)
+	if err != nil {
+		return err
+	}
+	if backup != "" {
+		fmt.Fprintf(e.stdout, "Saved %s (previous version kept as %s).\n", e.configPath, backup)
+	} else {
+		fmt.Fprintf(e.stdout, "Saved %s.\n", e.configPath)
+	}
+	return nil
 }
 
 // cmdDump implements `gdiskmap dump`.

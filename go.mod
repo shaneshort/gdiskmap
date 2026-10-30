@@ -1,4 +1,4 @@
-module gdiskmap
+module github.com/shaneshort/gdiskmap
 
 go 1.25
 

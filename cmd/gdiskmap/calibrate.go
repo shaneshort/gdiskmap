@@ -12,9 +12,9 @@ import (
 	"sync"
 	"syscall"
 
-	"gdiskmap/internal/inventory"
-	"gdiskmap/internal/layout"
-	"gdiskmap/internal/mpt"
+	"github.com/shaneshort/gdiskmap/internal/inventory"
+	"github.com/shaneshort/gdiskmap/internal/layout"
+	"github.com/shaneshort/gdiskmap/internal/mpt"
 )
 
 // cmdCalibrate implements `gdiskmap calibrate`.
@@ -42,11 +42,11 @@ func cmdCalibrate(e *env, args []string) error {
 	calibrated := make(map[uint64]bool)
 	for i, t := range targets {
 		encls[i] = layout.CalibrationEnclosure{ID: t.enc.ID, Slots: t.slots, Hidden: make(map[int]bool)}
-		if !*lightEmpty {
-			for _, n := range t.slots {
-				if s := findSlot(sys.inv, t.controller, t.enclosure, n); s == nil || s.Disk == nil {
-					encls[i].Hidden[n] = true
-				}
+		for _, n := range t.slots {
+			s := findSlot(sys.inv, t.controller, t.enclosure, n)
+			// Unusable bays are never lit; empty ones only with -light-empty.
+			if s == nil || s.Unusable || (s.Disk == nil && !*lightEmpty) {
+				encls[i].Hidden[n] = true
 			}
 		}
 		calibrated[t.enc.ID] = true
@@ -68,6 +68,9 @@ func cmdCalibrate(e *env, args []string) error {
 	fmt.Fprintln(e.stdout, "Answer with the bay number you see lit, 's' to skip a slot whose LED you cannot see, or 'q' to stop.")
 	if !*lightEmpty {
 		fmt.Fprintln(e.stdout, "Empty slots are not lit; their bays are inferred from the pattern (use -light-empty if your backplane lights empty bays).")
+	}
+	if slices.ContainsFunc(sys.inv.Slots, func(s inventory.Slot) bool { return s.Unusable }) {
+		fmt.Fprintln(e.stdout, "Slots marked unusable are not lit; their bays are inferred from the pattern.")
 	}
 	p := newTerminalPrompter(e, sys, targets)
 	p.start()
@@ -96,7 +99,7 @@ func cmdCalibrate(e *env, args []string) error {
 			}
 			note := ""
 			if encls[i].Hidden[slot] {
-				note = " (empty, inferred)"
+				note = " (not lit, inferred)"
 			}
 			fmt.Fprintf(e.stdout, "    slot %d: bay %d%s\n", slot, bay, note)
 			total++

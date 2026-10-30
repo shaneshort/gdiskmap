@@ -170,7 +170,10 @@ name = "front"            # optional
   3 = "8"
 ```
 
-Slots without an entry use the default label `c<ioc>:s<slot>`.
+Slots without an entry use the default label `c<ioc>:s<slot>`. An
+`[enclosure.unusable]` table marks slots that must not be used, mapping the
+slot to a reason; `gdiskmap unusable on|off` edits it, `disks` shows those
+slots as unusable, and `calibrate` never lights them.
 
 ## Commands
 

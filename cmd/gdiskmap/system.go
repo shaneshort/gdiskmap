@@ -13,11 +13,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"gdiskmap/internal/inventory"
-	"gdiskmap/internal/layout"
-	"gdiskmap/internal/mpt"
-	"gdiskmap/internal/sysfs"
-	"gdiskmap/internal/zfs"
+	"github.com/shaneshort/gdiskmap/internal/inventory"
+	"github.com/shaneshort/gdiskmap/internal/layout"
+	"github.com/shaneshort/gdiskmap/internal/mpt"
+	"github.com/shaneshort/gdiskmap/internal/sysfs"
+	"github.com/shaneshort/gdiskmap/internal/zfs"
 )
 
 // Files a dump directory holds besides the captured sysfs and /dev entries.

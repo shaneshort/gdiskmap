@@ -11,8 +11,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"gdiskmap/internal/inventory"
-	"gdiskmap/internal/zfs"
+	"github.com/shaneshort/gdiskmap/internal/inventory"
+	"github.com/shaneshort/gdiskmap/internal/zfs"
 )
 
 // none marks an absent value in table cells.
@@ -73,8 +73,13 @@ func slotColumns(inv *inventory.Inventory) []column {
 	cols = append(cols,
 		column{"DEVICE", disk(func(d *inventory.Disk) string { return orNone(d.Block) })},
 		column{"MODEL", func(s inventory.Slot) string {
-			if s.Disk == nil {
+			switch {
+			case s.Disk == nil && s.Unusable:
+				return "(unusable)"
+			case s.Disk == nil:
 				return "(empty)"
+			case s.Unusable:
+				return orNone(s.Disk.Model) + " [unusable bay]"
 			}
 			return orNone(s.Disk.Model)
 		}},

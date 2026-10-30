@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"gdiskmap/internal/inventory"
-	"gdiskmap/internal/layout"
-	"gdiskmap/internal/mpt"
-	"gdiskmap/internal/sysfs"
+	"github.com/shaneshort/gdiskmap/internal/inventory"
+	"github.com/shaneshort/gdiskmap/internal/layout"
+	"github.com/shaneshort/gdiskmap/internal/mpt"
+	"github.com/shaneshort/gdiskmap/internal/sysfs"
 )
 
 // writeCapture writes a capture directory, as `gdiskmap dump` produces, for
@@ -251,6 +251,48 @@ func TestAddress(t *testing.T) {
 		got, err := sys.address(&tc.slot)
 		if (err != nil) != tc.wantErr || got != tc.want {
 			t.Errorf("address(%s) = %v, %v; want %v, error %t", tc.name, got, err, tc.want, tc.wantErr)
+		}
+	}
+}
+
+func TestUnusableCommand(t *testing.T) {
+	dir := writeCapture(t)
+	cfg := filepath.Join(t.TempDir(), "gdiskmap.toml")
+	code, stdout, stderr := runCLI(t, "-root", dir, "-config", cfg, "unusable", "on", "-reason", "clip broken", "c0:s1", "c0:s2")
+	if code != 0 {
+		t.Fatalf("gdiskmap unusable on: exit status %d, stderr:\n%s", code, stderr)
+	}
+	if !strings.Contains(stdout, "c0:s1 (empty): unusable on") {
+		t.Errorf("gdiskmap unusable on output = %q", stdout)
+	}
+	data, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatalf("reading config: %v", err)
+	}
+	if !strings.Contains(string(data), `1 = "clip broken"`) {
+		t.Errorf("config lacks the unusable mark:\n%s", data)
+	}
+	_, stdout, _ = runCLI(t, "-root", dir, "-config", cfg, "disks")
+	if !strings.Contains(stdout, "(unusable)") {
+		t.Errorf("gdiskmap disks does not show the unusable bay:\n%s", stdout)
+	}
+
+	if code, _, stderr := runCLI(t, "-root", dir, "-config", cfg, "unusable", "off", "c0:s1"); code != 0 {
+		t.Fatalf("gdiskmap unusable off: exit status %d, stderr:\n%s", code, stderr)
+	}
+	_, stdout, _ = runCLI(t, "-root", dir, "-config", cfg, "disks")
+	if strings.Count(stdout, "(unusable)") != 1 {
+		t.Errorf("gdiskmap disks after unusable off: want one unusable bay:\n%s", stdout)
+	}
+
+	for _, args := range [][]string{
+		{"unusable"},
+		{"unusable", "on"},
+		{"unusable", "maybe", "c0:s1"},
+		{"unusable", "off", "-reason", "x", "c0:s1"},
+	} {
+		if code, _, _ := runCLI(t, append([]string{"-root", dir, "-config", cfg}, args...)...); code != 2 {
+			t.Errorf("gdiskmap %q: exit status %d, want 2", args, code)
 		}
 	}
 }

@@ -64,9 +64,10 @@ in bay `base + step × i`, where `step` is +1 or −1.
    back to asking about the rest of that group slot by slot. The next group
    learns its pattern afresh.
 
-Empty slots are not shown (unless `-light-empty` is given). They are filled
-in from the pattern of their group once it has been confirmed on occupied
-slots, and the result marks them "(empty, inferred)". A group with no
+Empty slots are not shown (unless `-light-empty` is given), and neither are
+slots marked unusable (see the README). They are filled in from the pattern
+of their group once it has been confirmed on other slots, and the result
+marks them "(not lit, inferred)". Recalibrating keeps unusable marks. A group with no
 occupied slot cannot be confirmed, so its slots stay unmapped; label them by
 editing the config, or calibrate again once a disk is in the group.
 

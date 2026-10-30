@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"gdiskmap/internal/inventory"
-	"gdiskmap/internal/sysfs"
-	"gdiskmap/internal/zfs"
+	"github.com/shaneshort/gdiskmap/internal/inventory"
+	"github.com/shaneshort/gdiskmap/internal/sysfs"
+	"github.com/shaneshort/gdiskmap/internal/zfs"
 )
 
 func testInventory() *inventory.Inventory {
@@ -91,6 +91,21 @@ func TestTableWithoutLEDState(t *testing.T) {
 	}
 	if first, _, _ := strings.Cut(buf.String(), "\n"); strings.Contains(first, "LED") {
 		t.Errorf("Table() header = %q, want no LED column when no LED state was read", first)
+	}
+}
+
+func TestTableUnusable(t *testing.T) {
+	inv := testInventory()
+	inv.Slots[1].Unusable = true
+	inv.Slots[2].Unusable = true
+	var buf bytes.Buffer
+	if err := Table(&buf, inv); err != nil {
+		t.Fatalf("Table() error: %v", err)
+	}
+	for _, want := range []string{"(unusable)", "ST2000NX0433 [unusable bay]"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("Table() output lacks %q:\n%s", want, buf.String())
+		}
 	}
 }
 

@@ -22,7 +22,7 @@ import (
 	"errors"
 	"fmt"
 
-	"gdiskmap/internal/sysfs"
+	"github.com/shaneshort/gdiskmap/internal/sysfs"
 )
 
 // SlotStatus is a SEP slot status word (the SlotStatus field of

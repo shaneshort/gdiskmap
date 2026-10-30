@@ -9,10 +9,10 @@ import (
 	"slices"
 	"strings"
 
-	"gdiskmap/internal/layout"
-	"gdiskmap/internal/mpt"
-	"gdiskmap/internal/sysfs"
-	"gdiskmap/internal/zfs"
+	"github.com/shaneshort/gdiskmap/internal/layout"
+	"github.com/shaneshort/gdiskmap/internal/mpt"
+	"github.com/shaneshort/gdiskmap/internal/sysfs"
+	"github.com/shaneshort/gdiskmap/internal/zfs"
 )
 
 // Inventory is the merged view of every controller slot.
@@ -73,6 +73,10 @@ type Slot struct {
 	// Number is the slot number, or -1 for an unplaced device.
 	Number int   `json:"number"`
 	Disk   *Disk `json:"disk,omitempty"`
+	// Unusable reports that the layout config marks the slot as unusable
+	// (e.g. a faulty backplane connector), for UnusableReason.
+	Unusable       bool   `json:"unusable,omitempty"`
+	UnusableReason string `json:"unusableReason,omitempty"`
 	// LED is the slot's indicator state, if it was read.
 	LED *LEDState `json:"led,omitempty"`
 }
@@ -200,6 +204,7 @@ func (inv *Inventory) placeDevices(ci int, h sysfs.Host, cfg *layout.Config) {
 			if l, ok := cfg.Label(e.ID, n); ok {
 				slot.Label = l
 			}
+			slot.UnusableReason, slot.Unusable = cfg.Unusable(e.ID, n)
 			var names []string
 			for di, d := range h.Devices {
 				if d.EnclosureID != e.ID || d.Bay != n {
@@ -210,6 +215,10 @@ func (inv *Inventory) placeDevices(ci int, h sysfs.Host, cfg *layout.Config) {
 				s.Disk = newDisk(h, d)
 				inv.Slots = append(inv.Slots, s)
 				names = append(names, cmp.Or(d.Block, d.EndDevice))
+				if slot.Unusable {
+					inv.Warnings = append(inv.Warnings, fmt.Sprintf("bay %s (%s) is marked unusable%s but holds %s",
+						slot.Label, slot.DefaultLabel, reasonSuffix(slot.UnusableReason), cmp.Or(d.Block, d.EndDevice)))
+				}
 			}
 			switch {
 			case len(names) == 0:
@@ -238,6 +247,14 @@ func (inv *Inventory) placeDevices(ci int, h sysfs.Host, cfg *layout.Config) {
 		})
 		inv.Warnings = append(inv.Warnings, fmt.Sprintf("%s: %s has no known slot (enclosure %#x, bay %d)", c.Name, name, d.EnclosureID, d.Bay))
 	}
+}
+
+// reasonSuffix formats an unusable reason for a message, e.g. " (clip broken)".
+func reasonSuffix(reason string) string {
+	if reason == "" {
+		return ""
+	}
+	return " (" + reason + ")"
 }
 
 func defaultLabel(c *Controller, enclosure, slot int) string {

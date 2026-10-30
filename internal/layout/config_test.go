@@ -17,6 +17,10 @@ name = "front"
   3 = "8"
   10 = "front \"left\""
 
+  [enclosure.unusable]
+  2 = "connector clip broken"
+  5 = ""
+
 [[enclosure]]
 id = "500605B0013CA580"
 `
@@ -47,6 +51,47 @@ func TestParse(t *testing.T) {
 	if got := c.Name(0x500605b0071f24b0); got != "front" {
 		t.Errorf("Name() = %q, want %q", got, "front")
 	}
+	unusable := []struct {
+		slot       int
+		wantReason string
+		wantOK     bool
+	}{
+		{2, "connector clip broken", true},
+		{5, "", true},
+		{0, "", false},
+	}
+	for _, tc := range unusable {
+		reason, ok := c.Unusable(0x500605b0071f24b0, tc.slot)
+		if reason != tc.wantReason || ok != tc.wantOK {
+			t.Errorf("Unusable(slot %d) = %q, %t, want %q, %t", tc.slot, reason, ok, tc.wantReason, tc.wantOK)
+		}
+	}
+}
+
+func TestUnusableMarks(t *testing.T) {
+	c := &Config{}
+	if err := c.SetLabel(1, 0, "A"); err != nil {
+		t.Fatalf("SetLabel() error: %v", err)
+	}
+	if err := c.SetUnusable(1, 3, "dead"); err != nil {
+		t.Fatalf("SetUnusable() error: %v", err)
+	}
+	c.ClearLabels(1)
+	if _, ok := c.Unusable(1, 3); !ok {
+		t.Error("ClearLabels() removed an unusable mark, want it kept")
+	}
+	c.ClearUnusable(1, 3)
+	c.ClearUnusable(2, 0) // Unknown enclosure: no effect.
+	if _, ok := c.Unusable(1, 3); ok {
+		t.Error("ClearUnusable() left the mark")
+	}
+	if err := c.SetUnusable(1, 3, "bad\nreason"); err == nil {
+		t.Error("SetUnusable(control characters) error = nil, want error")
+	}
+	var nilConfig *Config
+	if _, ok := nilConfig.Unusable(1, 3); ok {
+		t.Error("nil Config Unusable() = true, want false")
+	}
 }
 
 func TestParseErrors(t *testing.T) {
@@ -59,6 +104,8 @@ func TestParseErrors(t *testing.T) {
 		"reserved label":  "[[enclosure]]\nid = \"0x1\"\n[enclosure.slots]\n0 = \"all\"\n",
 		"empty label":     "[[enclosure]]\nid = \"0x1\"\n[enclosure.slots]\n0 = \"\"\n",
 		"unknown key":     "[[enclosure]]\nid = \"0x1\"\ncolour = \"red\"\n",
+		"control in name": "[[enclosure]]\nid = \"0x1\"\nname = \"a\\tb\"\n",
+		"bad unusable":    "[[enclosure]]\nid = \"0x1\"\n[enclosure.unusable]\nx = \"\"\n",
 		"invalid TOML":    "[[enclosure]\n",
 	}
 	for name, in := range tests {
