@@ -179,7 +179,10 @@ stderr. `--json` emits the full model.
 ### `gdiskmap locate on|off <target>...` / `gdiskmap fault on|off <target>...`
 
 Targets: `sdX`, `/dev/...` (including by-id paths), serial, WWN, bay label,
-`c<ioc>:s<slot>`, or `all`. Ambiguous targets are rejected with the
+`c<n>:s<slot>`, `all` (including disks without a known slot), `occupied` or
+`empty`. Controllers are numbered `c0`, `c1`, ... in the order SAS2 then
+SAS3, each by IOC number, which matches the vendor tools' index on hosts
+with one HBA generation. Ambiguous targets are rejected with the
 candidates listed. Occupied slots are addressed by device handle; empty slots
 by enclosure + slot.
 
@@ -201,29 +204,38 @@ asking which front-panel bay is lit.
   best case an 8-slot controller needs two answers and two confirmations.
   A rejected prediction drops back to asking for every slot in that group.
   `--confirm-all` verifies every predicted slot individually instead.
+- A skipped slot is filled in from a confirmed pattern, so empty bays whose
+  LEDs do not light still receive a label.
 - Bay numbers are integers. Arbitrary text labels can be set by editing the
   config.
 - Empty slots are included, because their LEDs can be addressed by enclosure
   + slot. If a backplane does not light empty bays, the user skips them.
 - LEDs are always turned off on exit, including on interrupt (SIGINT/SIGTERM).
 - Before writing, the resulting mapping is shown and confirmation requested;
-  an existing config is backed up rather than overwritten silently.
+  an existing config is backed up rather than overwritten silently. Saving
+  replaces all labels of the calibrated enclosures; bay numbers labelled in
+  other enclosures cannot be reused.
 
 ### `gdiskmap dump <dir>`
 
-Copies the sysfs attributes gdiskmap reads, the `/dev/disk/by-id` links, the
-`zpool status -j` output and the raw MPI Enclosure Page 0 responses into a
-directory. Used for test fixtures and bug reports.
+Copies the sysfs and `/dev` entries gdiskmap reads (recorded as discovery
+runs, symbolic links included), the `zpool status -j` output and the decoded
+enclosure lists into a directory. Used for test fixtures and bug reports.
+`gdiskmap -root <dir>` replays a capture; LED commands and calibration are
+unavailable in that mode.
 
 ## Error handling
 
 - **No mpt ctl device or not root:** `disks` still works from sysfs alone,
   with a notice that empty slots and LED state are unavailable. LED commands
   fail with a clear message.
-- **No ZFS or ZFS older than 2.3:** pool columns are omitted with a notice.
+- **No ZFS or ZFS older than 2.3:** pool columns are omitted with a notice,
+  so that `-` in the pool column always means "in no pool".
 - **No `mpt2sas`/`mpt3sas` hosts:** the tool exits non-zero with a message.
 - **An MPI request fails (non-success IOCStatus):** the status code is
   reported with the controller and slot; no retry loops.
+- **An MPI request times out:** `mpt3sas` resets the controller. Requests use
+  a 10-second timeout and are only sent when needed.
 - **Duplicate (enclosure, slot) pairs:** reported as a firmware slot-table
   problem; LEDs for affected disks still work via device handle.
 

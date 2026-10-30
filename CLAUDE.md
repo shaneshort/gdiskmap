@@ -30,3 +30,20 @@ When making changes, ensure the following:
 - Use meaningful commit messages that clearly describe the changes made.
 
 If there are any useful tools, resources or information I provide, update this file accordingly.
+
+## Go project conventions
+
+- Follow the Google Go style guide, especially the best practices:
+  https://google.github.io/styleguide/go/best-practices.html
+- Go 1.25 (keep `go.mod` at 1.25; `golang.org/x/sys` is pinned to a release that supports it).
+- `make test` runs the tests; `make lint` runs golangci-lint for the host and for Linux
+  (the ioctl code only builds on Linux). `make build` produces static Linux binaries in `bin/`.
+- Test output: `go test ./... > <scratch>/test.log 2>&1` then grep the log.
+
+## Reference material
+
+- MPI message layouts and constants: the Linux kernel's `drivers/scsi/mpt3sas/mpi/`
+  (`mpi2.h`, `mpi2_cnfg.h`, `mpi2_init.h`) and the ctl ioctl in `drivers/scsi/mpt3sas/mpt3sas_ctl.[ch]`.
+- `zpool status -j` JSON format: zpool-status(8) in the OpenZFS repository.
+- Reference host `pve`: Proxmox, 3x LSI SAS2 HBAs (SAS2008, 2x SAS2308/SAS9207-8i), direct-attach
+  SGPIO backplanes, ZFS 2.4. Use `gdiskmap dump` there to capture test fixtures.
