@@ -154,7 +154,8 @@ reports success.
 ## Capturing and replaying
 
 `gdiskmap dump <dir>` copies exactly the sysfs and `/dev` entries gdiskmap
-reads, plus the `zpool status -j` output and the controllers' enclosure
+reads (the entries of every directory it lists are reproduced, but only
+files it reads keep their content), plus the `zpool status -j` output and the controllers' enclosure
 lists, into `<dir>`. `gdiskmap -root <dir> disks` then reproduces the output
 on any machine. LED commands and calibration are not available with
 `-root`.

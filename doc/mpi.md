@@ -66,7 +66,9 @@ LED changed, which is reported as a failure rather than a success the
 firmware would ignore.
 
 LED commands and calibration hold an exclusive lock
-(`/run/lock/gdiskmap.lock`) while they run, so two gdiskmap processes never
+(`/run/lock/gdiskmap.lock`) while they run, taken before the disks and the
+config are read, so a command that waited sees the result of the one it
+waited for (e.g. a calibration's new labels), and so two gdiskmap processes never
 interleave their read-modify-write sequences. A second command waits, with a
 note, until the first finishes; during calibration that is the whole
 session. Other tools, such as `sas2ircu`, do not take the lock.

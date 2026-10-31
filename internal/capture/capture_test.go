@@ -53,3 +53,41 @@ func TestRecorderRoundTrip(t *testing.T) {
 		t.Error("WriteTo(non-empty dir) error = nil, want error")
 	}
 }
+
+func TestRecorderListedEntries(t *testing.T) {
+	src := fstest.MapFS{
+		"d/link":        {Data: []byte("../target"), Mode: fs.ModeSymlink | 0o777},
+		"d/sub/deep":    {Data: []byte("not listed")},
+		"d/file":        {Data: []byte("content")},
+		"d/read":        {Data: []byte("read")},
+		"elsewhere/new": {Data: []byte("x")},
+	}
+	r := NewRecorder(src)
+	if _, err := fs.ReadFile(r, "d/read"); err != nil {
+		t.Fatalf("ReadFile() error: %v", err)
+	}
+	if _, err := fs.ReadDir(r, "d"); err != nil {
+		t.Fatalf("ReadDir() error: %v", err)
+	}
+	dir := filepath.Join(t.TempDir(), "dump")
+	if err := r.WriteTo(dir); err != nil {
+		t.Fatalf("WriteTo() error: %v", err)
+	}
+	// Every listed entry exists in the copy, with its type; only content
+	// that was read is copied.
+	if target, err := os.Readlink(filepath.Join(dir, "d/link")); err != nil || target != "../target" {
+		t.Errorf("listed link = %q, %v, want ../target", target, err)
+	}
+	if info, err := os.Stat(filepath.Join(dir, "d/sub")); err != nil || !info.IsDir() {
+		t.Errorf("listed directory not reproduced: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "d/sub/deep")); err == nil {
+		t.Error("entry of an unlisted directory was copied")
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "d/file")); err != nil || len(got) != 0 {
+		t.Errorf("listed file = %q, %v, want an empty file", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "d/read")); err != nil || string(got) != "read" {
+		t.Errorf("read file = %q, %v, want its content kept", got, err)
+	}
+}

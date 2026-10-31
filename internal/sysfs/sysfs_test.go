@@ -3,11 +3,14 @@ package sysfs
 import (
 	"fmt"
 	"io/fs"
+	"os"
 	"path"
 	"testing"
 	"testing/fstest"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/shaneshort/gdiskmap/internal/capture"
 )
 
 // fakeSys builds an in-memory copy of the parts of sysfs and /dev that
@@ -335,6 +338,49 @@ func TestDiscoverExpander(t *testing.T) {
 		if want := h.Number == 0; h.HasExpander != want {
 			t.Errorf("Discover() host%d HasExpander = %t, want %t", h.Number, h.HasExpander, want)
 		}
+	}
+}
+
+// TestCaptureRoundTrip checks that a capture made through capture.Recorder
+// reproduces the device-mapper stack and the expander, which discovery
+// learns only from directory listings.
+func TestCaptureRoundTrip(t *testing.T) {
+	f := pveFixture(t)
+	f.addDM("dm-0", "mpatha", "sdm", "sdn")
+	f.addDM("dm-1", "mpatha-part1", "dm-0")
+	f.file("sys/devices/pci0000:00/0000:00:01.1/0000:c1:00.0/host0/port-0:9/expander-0:0/sas_device/expander-0:0/sas_address", "0x5\n")
+
+	rec := capture.NewRecorder(f.fsys)
+	wantHosts, err := Discover(rec)
+	if err != nil {
+		t.Fatalf("Discover(recorder) error: %v", err)
+	}
+	wantDisks, err := PhysicalDisks(rec, "/dev/mapper/mpatha-part1")
+	if err != nil {
+		t.Fatalf("PhysicalDisks(recorder) error: %v", err)
+	}
+	dir := t.TempDir()
+	if err := rec.WriteTo(dir); err != nil {
+		t.Fatalf("WriteTo() error: %v", err)
+	}
+
+	replay := os.DirFS(dir)
+	gotHosts, err := Discover(replay)
+	if err != nil {
+		t.Fatalf("Discover(replay) error: %v", err)
+	}
+	if diff := cmp.Diff(wantHosts, gotHosts); diff != "" {
+		t.Errorf("Discover(replay) mismatch (-recorded +replayed):\n%s", diff)
+	}
+	if !gotHosts[0].HasExpander {
+		t.Error("Discover(replay) lost the expander")
+	}
+	gotDisks, err := PhysicalDisks(replay, "/dev/mapper/mpatha-part1")
+	if err != nil {
+		t.Fatalf("PhysicalDisks(replay) error: %v", err)
+	}
+	if diff := cmp.Diff(wantDisks, gotDisks); diff != "" {
+		t.Errorf("PhysicalDisks(replay) mismatch (-recorded +replayed):\n%s", diff)
 	}
 }
 

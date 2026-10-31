@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sync"
 )
@@ -52,7 +53,11 @@ func (r *Recorder) ReadFile(name string) ([]byte, error) {
 	return b, nil
 }
 
-// ReadDir implements fs.ReadDirFS.
+// ReadDir implements fs.ReadDirFS. It records the directory and the
+// existence of each entry in it (directories, symbolic links with their
+// targets, and other entries as empty files), because callers may act on a
+// listing alone, e.g. the entries of a sysfs slaves directory or the
+// presence of an expander.
 func (r *Recorder) ReadDir(name string) ([]fs.DirEntry, error) {
 	entries, err := fs.ReadDir(r.fsys, name)
 	if err != nil {
@@ -61,6 +66,26 @@ func (r *Recorder) ReadDir(name string) ([]fs.DirEntry, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.dirs[name] = true
+	for _, e := range entries {
+		p := path.Join(name, e.Name())
+		switch {
+		case e.IsDir():
+			r.dirs[p] = true
+		case e.Type()&fs.ModeSymlink != 0:
+			if _, ok := r.links[p]; ok {
+				continue
+			}
+			target, err := r.fsys.ReadLink(p)
+			if err != nil {
+				return nil, err
+			}
+			r.links[p] = target
+		default:
+			if _, ok := r.files[p]; !ok {
+				r.files[p] = nil
+			}
+		}
+	}
 	return entries, nil
 }
 

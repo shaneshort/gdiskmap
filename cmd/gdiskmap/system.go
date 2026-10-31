@@ -80,7 +80,8 @@ type system struct {
 // gatherOptions selects the optional parts of gathering.
 type gatherOptions struct {
 	// needControllers makes failure to open any controller an error, and
-	// takes the LED lock (see lockLEDs) for the life of the system.
+	// takes the LED lock (see lockLEDs) for the life of the system, before
+	// anything is read.
 	needControllers bool
 	// readLEDs reads the LED state of every slot.
 	readLEDs bool
@@ -89,33 +90,45 @@ type gatherOptions struct {
 // gather discovers controllers and disks in fsys and builds the inventory.
 // Missing optional data (controller access, ZFS) is reported as a note.
 func gather(e *env, fsys fs.ReadLinkFS, opts gatherOptions) (*system, error) {
-	hosts, err := sysfs.Discover(fsys)
-	if err != nil {
-		return nil, err
-	}
-	if len(hosts) == 0 {
-		return nil, errors.New("no LSI SAS controllers (mpt2sas/mpt3sas driver) found")
-	}
-	cfg, err := layout.Load(e.configPath)
-	if err != nil {
-		return nil, err
-	}
 	sys := &system{
 		fsys:        fsys,
-		cfg:         cfg,
 		controllers: make(map[int]*mpt.Controller),
 		enclosures:  make(map[int][]mpt.Enclosure),
 	}
-	if err := sys.openControllers(e, hosts, opts.needControllers); err != nil {
+	if opts.needControllers && e.root == "" {
+		// The lock is taken before discovery and before the config is
+		// loaded: a command that waited for a calibration to finish must
+		// see the mapping that calibration saved, not the one before it.
+		unlock, err := lockLEDs(e)
+		if err != nil {
+			return nil, err
+		}
+		sys.unlockLEDs = unlock
+	}
+	// fail releases the lock and any open controllers.
+	fail := func(err error) (*system, error) {
 		sys.close()
 		return nil, err
+	}
+	hosts, err := sysfs.Discover(fsys)
+	if err != nil {
+		return fail(err)
+	}
+	if len(hosts) == 0 {
+		return fail(errors.New("no LSI SAS controllers (mpt2sas/mpt3sas driver) found"))
+	}
+	if sys.cfg, err = layout.Load(e.configPath); err != nil {
+		return fail(err)
+	}
+	if err := sys.openControllers(e, hosts, opts.needControllers); err != nil {
+		return fail(err)
 	}
 	vdevs, poolsKnown := sys.readPools(e)
 
 	src := inventory.Sources{
 		Hosts:      hosts,
 		Enclosures: sys.enclosures,
-		Layout:     cfg,
+		Layout:     sys.cfg,
 	}
 	if poolsKnown {
 		src.Vdevs = vdevs
@@ -150,13 +163,6 @@ func (sys *system) openControllers(e *env, hosts []sysfs.Host, required bool) er
 		return nil
 	}
 
-	if required {
-		unlock, err := lockLEDs(e)
-		if err != nil {
-			return err
-		}
-		sys.unlockLEDs = unlock
-	}
 	for _, h := range hosts {
 		c, err := mpt.Open(h.Driver, h.IOC)
 		if err != nil {
