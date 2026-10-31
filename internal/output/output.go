@@ -18,21 +18,52 @@ import (
 // none marks an absent value in table cells.
 const none = "-"
 
+// ANSI SGR sequences for row colours.
+const (
+	ansiGreen = "\x1b[32m"
+	ansiRed   = "\x1b[31m"
+	ansiReset = "\x1b[0m"
+)
+
 // Table writes the inventory's slots, followed by pool members that were not
-// found on any device.
-func Table(w io.Writer, inv *inventory.Inventory) error {
+// found on any device. With colour set, an empty usable bay's row is green
+// and an unusable bay's row (empty or not) is red.
+func Table(w io.Writer, inv *inventory.Inventory, colour bool) error {
 	// tabwriter pads every cell, so rows ending in an empty cell would carry
-	// trailing spaces; render into a buffer and trim them.
+	// trailing spaces; render into a buffer and trim them. Colour is applied
+	// here too, after alignment: tabwriter counts escape sequences towards a
+	// cell's width, so colouring cells before alignment would skew columns.
 	var buf bytes.Buffer
 	if err := table(&buf, inv); err != nil {
 		return err
 	}
+	// table writes the header line and then one line per slot, in this order.
+	rows := slices.Concat(inv.Slots, inv.Unplaced)
+	n := 0
 	for line := range strings.Lines(buf.String()) {
-		if _, err := io.WriteString(w, strings.TrimRight(line, " \n")+"\n"); err != nil {
+		line = strings.TrimRight(line, " \n")
+		if colour && n >= 1 && n <= len(rows) {
+			if c := rowColour(rows[n-1]); c != "" {
+				line = c + line + ansiReset
+			}
+		}
+		n++
+		if _, err := io.WriteString(w, line+"\n"); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// rowColour returns the colour of a slot's table row, or "" for none.
+func rowColour(s inventory.Slot) string {
+	switch {
+	case s.Unusable:
+		return ansiRed
+	case s.Disk == nil:
+		return ansiGreen
+	}
+	return ""
 }
 
 // column is one column of the slot table.

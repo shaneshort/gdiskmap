@@ -16,6 +16,7 @@ import (
 	"github.com/shaneshort/gdiskmap/internal/layout"
 	"github.com/shaneshort/gdiskmap/internal/mpt"
 	"github.com/shaneshort/gdiskmap/internal/output"
+	"golang.org/x/term"
 )
 
 // newFlagSet returns a flag set for a subcommand that reports errors as
@@ -56,7 +57,20 @@ func cmdDisks(e *env, args []string) error {
 		return output.JSON(e.stdout, sys.inv)
 	}
 	sys.printWarnings(e)
-	return output.Table(e.stdout, sys.inv)
+	return output.Table(e.stdout, sys.inv, useColour(e.stdout))
+}
+
+// useColour reports whether table output to w should be coloured: only when
+// w is a terminal, and not when the NO_COLOR convention (https://no-color.org)
+// or TERM=dumb asks for plain output.
+//
+//nolint:misspell // NO_COLOR is the name of an external convention.
+func useColour(w io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	f, ok := w.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
 }
 
 // cmdLED implements `gdiskmap locate` and `gdiskmap fault`.

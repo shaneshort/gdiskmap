@@ -95,6 +95,10 @@ Notes on the output:
   labels.
 - Controllers are numbered by the driver's adapter number, which matches the
   index `sas2ircu`/`sas3ircu` use on a host with only one HBA generation.
+- On a terminal, the rows of empty usable bays are green and the rows of
+  unusable bays (empty or not) are red. Output to a pipe or file is never
+  coloured, and setting `NO_COLOR` (see https://no-color.org) or `TERM=dumb`
+  turns colour off.
 - `POOL` is `-` for a disk in no pool.
 - `LED` appears only with `-leds`, and only if the controller reports LED
   state.

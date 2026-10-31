@@ -39,7 +39,7 @@ func testInventory() *inventory.Inventory {
 
 func TestTable(t *testing.T) {
 	var buf bytes.Buffer
-	if err := Table(&buf, testInventory()); err != nil {
+	if err := Table(&buf, testInventory(), false); err != nil {
 		t.Fatalf("Table() error: %v", err)
 	}
 	want := `BAY    SLOT   DEVICE  MODEL         SERIAL    SIZE  POOL     VDEV      STATE   LED     LINK ERRS
@@ -60,7 +60,7 @@ func TestTableWithoutCustomLabels(t *testing.T) {
 	inv := testInventory()
 	inv.Slots[0].Label = inv.Slots[0].DefaultLabel
 	var buf bytes.Buffer
-	if err := Table(&buf, inv); err != nil {
+	if err := Table(&buf, inv, false); err != nil {
 		t.Fatalf("Table() error: %v", err)
 	}
 	if first, _, _ := strings.Cut(buf.String(), "\n"); strings.Contains(first, "SLOT") {
@@ -72,7 +72,7 @@ func TestTableWithoutPools(t *testing.T) {
 	inv := testInventory()
 	inv.PoolsKnown = false
 	var buf bytes.Buffer
-	if err := Table(&buf, inv); err != nil {
+	if err := Table(&buf, inv, false); err != nil {
 		t.Fatalf("Table() error: %v", err)
 	}
 	if first, _, _ := strings.Cut(buf.String(), "\n"); strings.Contains(first, "POOL") {
@@ -86,7 +86,7 @@ func TestTableWithoutLEDState(t *testing.T) {
 		inv.Slots[i].LED = nil
 	}
 	var buf bytes.Buffer
-	if err := Table(&buf, inv); err != nil {
+	if err := Table(&buf, inv, false); err != nil {
 		t.Fatalf("Table() error: %v", err)
 	}
 	if first, _, _ := strings.Cut(buf.String(), "\n"); strings.Contains(first, "LED") {
@@ -99,12 +99,51 @@ func TestTableUnusable(t *testing.T) {
 	inv.Slots[1].Unusable = true
 	inv.Slots[2].Unusable = true
 	var buf bytes.Buffer
-	if err := Table(&buf, inv); err != nil {
+	if err := Table(&buf, inv, false); err != nil {
 		t.Fatalf("Table() error: %v", err)
 	}
 	for _, want := range []string{"(unusable)", "ST2000NX0433 [unusable bay]"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("Table() output lacks %q:\n%s", want, buf.String())
+		}
+	}
+}
+
+func TestTableColour(t *testing.T) {
+	inv := testInventory()
+	inv.Slots = append(inv.Slots,
+		inventory.Slot{Label: "c0:s5", DefaultLabel: "c0:s5", Unusable: true},
+		inventory.Slot{Label: "c0:s6", DefaultLabel: "c0:s6", Unusable: true, Disk: &inventory.Disk{Device: sysfs.Device{Block: "sdi"}}},
+	)
+	var plain, coloured bytes.Buffer
+	if err := Table(&plain, inv, false); err != nil {
+		t.Fatalf("Table(colour=false) error: %v", err)
+	}
+	if err := Table(&coloured, inv, true); err != nil {
+		t.Fatalf("Table(colour=true) error: %v", err)
+	}
+	if strings.Contains(plain.String(), "\x1b") {
+		t.Errorf("Table(colour=false) contains escape sequences:\n%q", plain.String())
+	}
+	// Each line must be its plain counterpart, wrapped in the row's colour,
+	// so that columns stay aligned.
+	plainLines := strings.Split(plain.String(), "\n")
+	gotLines := strings.Split(coloured.String(), "\n")
+	if len(gotLines) != len(plainLines) {
+		t.Fatalf("Table(colour=true) has %d lines, want %d", len(gotLines), len(plainLines))
+	}
+	wantColour := map[int]string{
+		2: ansiGreen, // c0:s1, empty
+		4: ansiRed,   // c0:s5, unusable and empty
+		5: ansiRed,   // c0:s6, unusable with a disk
+	}
+	for i, pl := range plainLines {
+		want := pl
+		if c, ok := wantColour[i]; ok {
+			want = c + pl + ansiReset
+		}
+		if gotLines[i] != want {
+			t.Errorf("line %d = %q, want %q", i, gotLines[i], want)
 		}
 	}
 }

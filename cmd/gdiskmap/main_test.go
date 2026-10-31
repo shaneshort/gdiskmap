@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -325,5 +326,19 @@ func TestReferenceHost(t *testing.T) {
 	}
 	if stdout != string(want) {
 		t.Errorf("gdiskmap disks output differs from %s:\ngot:\n%s\nwant:\n%s", golden, stdout, want)
+	}
+}
+
+func TestUseColour(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	defer w.Close()
+	for name, out := range map[string]io.Writer{"buffer": &bytes.Buffer{}, "pipe": w} {
+		if useColour(out) {
+			t.Errorf("useColour(%s) = true, want false for output that is not a terminal", name)
+		}
 	}
 }
