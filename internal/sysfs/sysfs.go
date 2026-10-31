@@ -51,6 +51,9 @@ type Host struct {
 	Phys []Phy `json:"phys"`
 	// Devices are the devices attached directly to the controller.
 	Devices []Device `json:"devices"`
+	// HasExpander reports that a SAS expander is attached to the
+	// controller. Devices behind an expander are not read (see readPorts).
+	HasExpander bool `json:"hasExpander,omitempty"`
 }
 
 // Phy holds a controller phy's link error counters. Non-zero counts point at
@@ -106,6 +109,7 @@ var (
 	portPattern      = regexp.MustCompile(`^port-\d+:\d+$`)
 	phyPattern       = regexp.MustCompile(`^phy-\d+:(\d+)$`)
 	endDevicePattern = regexp.MustCompile(`^end_device-\d+:\d+$`)
+	expanderPattern  = regexp.MustCompile(`^expander-\d+:\d+$`)
 	targetPattern    = regexp.MustCompile(`^target\d+:\d+:\d+$`)
 	lunPattern       = regexp.MustCompile(`^\d+:\d+:\d+:\d+$`)
 )
@@ -174,7 +178,7 @@ func readHost(fsys fs.FS, name string) (h Host, ok bool, err error) {
 	if h.Phys, err = readPhys(fsys, hostDir); err != nil {
 		return Host{}, false, err
 	}
-	if h.Devices, err = readPorts(fsys, hostDir); err != nil {
+	if h.Devices, h.HasExpander, err = readPorts(fsys, hostDir); err != nil {
 		return Host{}, false, err
 	}
 	return h, true, nil
@@ -217,15 +221,14 @@ func readPhys(fsys fs.FS, hostDir string) ([]Phy, error) {
 	return phys, nil
 }
 
-// readPorts reads the devices attached to each SAS port under hostDir.
-// Expanders are not descended into; expander-attached enclosures are outside
-// gdiskmap's scope.
-func readPorts(fsys fs.FS, hostDir string) ([]Device, error) {
+// readPorts reads the devices attached to each SAS port under hostDir, and
+// reports whether any port leads to an expander. Expanders are not descended
+// into; expander-attached enclosures are outside gdiskmap's scope.
+func readPorts(fsys fs.FS, hostDir string) (devices []Device, hasExpander bool, err error) {
 	ports, err := fs.ReadDir(fsys, hostDir)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	var devices []Device
 	for _, p := range ports {
 		if !portPattern.MatchString(p.Name()) {
 			continue
@@ -233,7 +236,7 @@ func readPorts(fsys fs.FS, hostDir string) ([]Device, error) {
 		portDir := path.Join(hostDir, p.Name())
 		entries, err := fs.ReadDir(fsys, portDir)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		var phys []int
 		var ends []string
@@ -243,18 +246,20 @@ func readPorts(fsys fs.FS, hostDir string) ([]Device, error) {
 				phys = append(phys, n)
 			} else if endDevicePattern.MatchString(e.Name()) {
 				ends = append(ends, e.Name())
+			} else if expanderPattern.MatchString(e.Name()) {
+				hasExpander = true
 			}
 		}
 		slices.Sort(phys)
 		for _, end := range ends {
 			ds, err := readEndDevice(fsys, path.Join(portDir, end), phys)
 			if err != nil {
-				return nil, fmt.Errorf("reading %s: %w", end, err)
+				return nil, false, fmt.Errorf("reading %s: %w", end, err)
 			}
 			devices = append(devices, ds...)
 		}
 	}
-	return devices, nil
+	return devices, hasExpander, nil
 }
 
 // readEndDevice reads the logical units of the end device at dir.
@@ -366,7 +371,9 @@ func parseUnitSerial(vpd []byte) string {
 
 // WholeDisk returns the name of the whole-disk block device that devPath
 // (e.g. "/dev/disk/by-id/ata-...-part3" or "/dev/sdb") refers to, resolving
-// symbolic links and mapping partitions to their parent disk.
+// symbolic links and mapping partitions to their parent disk. For a
+// device-mapper device it returns the dm device itself ("dm-3"); see
+// PhysicalDisks for the disks underneath.
 func WholeDisk(fsys fs.FS, devPath string) (string, error) {
 	dev, err := Resolve(fsys, strings.TrimPrefix(devPath, "/"))
 	if err != nil {
@@ -375,17 +382,82 @@ func WholeDisk(fsys fs.FS, devPath string) (string, error) {
 	if path.Dir(dev) != "dev" {
 		return "", fmt.Errorf("%s does not refer to a device node", devPath)
 	}
+	disk, _, err := wholeDiskOf(fsys, path.Base(dev))
+	return disk, err
+}
+
+// wholeDiskOf maps the block device name to its whole disk: a partition
+// ("sdb3") to its parent disk ("sdb"), and any other name to itself. It also
+// returns the disk's sysfs directory, found through the entry for name so
+// that only sys/class/block/<name> needs to exist (a capture made by `dump`
+// records just the entries it read).
+func wholeDiskOf(fsys fs.FS, name string) (disk, sysDir string, err error) {
 	// sys/class/block/<name> resolves to .../block/<disk> for a disk and to
 	// .../block/<disk>/<partition> for a partition.
-	sysDir, err := Resolve(fsys, path.Join("sys/class/block", path.Base(dev)))
+	dir, err := Resolve(fsys, path.Join("sys/class/block", name))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	parent := path.Dir(sysDir)
+	parent := path.Dir(dir)
 	if path.Base(path.Dir(parent)) == "block" {
-		return path.Base(parent), nil
+		return path.Base(parent), parent, nil
 	}
-	return path.Base(sysDir), nil
+	return path.Base(dir), dir, nil
+}
+
+// maxStackDepth bounds the device-mapper stack PhysicalDisks follows (e.g.
+// a partition on dm-crypt on multipath), in case of a cycle.
+const maxStackDepth = 16
+
+// PhysicalDisks returns the whole-disk block devices that devPath is stored
+// on. For a disk or partition that is the disk itself. For a device-mapper
+// device (multipath, dm-crypt, LVM) it is every disk underneath, found by
+// following the sysfs slaves directories; a multipath device yields one disk
+// per path.
+func PhysicalDisks(fsys fs.FS, devPath string) ([]string, error) {
+	dev, err := Resolve(fsys, strings.TrimPrefix(devPath, "/"))
+	if err != nil {
+		return nil, err
+	}
+	if path.Dir(dev) != "dev" {
+		return nil, fmt.Errorf("%s does not refer to a device node", devPath)
+	}
+	return lowerDisks(fsys, path.Base(dev), 0)
+}
+
+// lowerDisks returns the whole disks underneath the block device name (a
+// disk, partition or device-mapper device): the disk holding name if it has
+// no slaves, otherwise the disks underneath each slave.
+func lowerDisks(fsys fs.FS, name string, depth int) ([]string, error) {
+	if depth > maxStackDepth {
+		return nil, fmt.Errorf("%s: device-mapper stack deeper than %d", name, maxStackDepth)
+	}
+	disk, sysDir, err := wholeDiskOf(fsys, name)
+	if err != nil {
+		return nil, err
+	}
+	slaves, err := fs.ReadDir(fsys, path.Join(sysDir, "slaves"))
+	if errors.Is(err, fs.ErrNotExist) || (err == nil && len(slaves) == 0) {
+		return []string{disk}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var disks []string
+	for _, sl := range slaves {
+		// A slave may be a partition (e.g. dm-crypt on sdb2) or another
+		// device-mapper device (e.g. a partition on multipath).
+		sub, err := lowerDisks(fsys, sl.Name(), depth+1)
+		if err != nil {
+			return nil, err
+		}
+		for _, d := range sub {
+			if !slices.Contains(disks, d) {
+				disks = append(disks, d)
+			}
+		}
+	}
+	return disks, nil
 }
 
 // Resolve returns name with every symbolic link in it resolved, in the manner

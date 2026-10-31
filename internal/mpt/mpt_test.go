@@ -97,12 +97,20 @@ type fakeFirmware struct {
 	devices map[uint16]string
 	// failReads makes SEP read-status requests fail.
 	failReads bool
-	writes    []SlotStatus
+	// transportErr, if set, is returned for every request, as an ioctl
+	// failure would be.
+	transportErr error
+	requests     int
+	writes       []SlotStatus
 }
 
 func (f *fakeFirmware) close() error { return nil }
 
 func (f *fakeFirmware) submit(frame, dataIn []byte) ([]byte, error) {
+	f.requests++
+	if f.transportErr != nil {
+		return nil, f.transportErr
+	}
 	reply := make([]byte, 0x20)
 	reply[0x03] = frame[0x03]
 	setStatus := func(s uint16) { le.PutUint16(reply[0x0e:], s) }
@@ -208,14 +216,33 @@ func TestSetIndicator(t *testing.T) {
 }
 
 func TestSetIndicatorUnreadableStatus(t *testing.T) {
-	fw := &fakeFirmware{status: map[string]SlotStatus{}, devices: map[uint16]string{0x0e: "e1:3"}, failReads: true}
+	fw := &fakeFirmware{status: map[string]SlotStatus{"e1:3": StatusPredictedFault}, devices: map[uint16]string{0x0e: "e1:3"}, failReads: true}
 	c := &Controller{t: fw}
-	err := c.SetIndicator(DeviceAddress(0x0e), StatusIdentify, true)
-	if !errors.Is(err, ErrStatusNotPreserved) {
-		t.Fatalf("SetIndicator() error = %v, want ErrStatusNotPreserved", err)
+	var se *IOCStatusError
+	if err := c.SetIndicator(DeviceAddress(0x0e), StatusIdentify, true); !errors.As(err, &se) {
+		t.Fatalf("SetIndicator() error = %v, want IOCStatusError", err)
 	}
-	if diff := cmp.Diff([]SlotStatus{StatusIdentify}, fw.writes); diff != "" {
-		t.Errorf("SetIndicator() writes mismatch (-want +got):\n%s", diff)
+	// Writing without the current status would clear the fault indicator.
+	if len(fw.writes) != 0 {
+		t.Errorf("SetIndicator() wrote %#x after a failed read, want no write", fw.writes)
+	}
+}
+
+func TestTransportFailureStopsRequests(t *testing.T) {
+	fw := &fakeFirmware{status: map[string]SlotStatus{}, transportErr: errors.New("timed out")}
+	c := &Controller{t: fw}
+	if err := c.SetIndicator(EnclosureSlotAddress(1, 0), StatusIdentify, true); err == nil || errors.Is(err, ErrControllerFailed) {
+		t.Fatalf("first SetIndicator() error = %v, want the transport error", err)
+	}
+	fw.transportErr = nil
+	if err := c.SetIndicator(EnclosureSlotAddress(1, 1), StatusIdentify, true); !errors.Is(err, ErrControllerFailed) {
+		t.Errorf("SetIndicator() after a transport failure error = %v, want ErrControllerFailed", err)
+	}
+	if _, err := c.Enclosures(); !errors.Is(err, ErrControllerFailed) {
+		t.Errorf("Enclosures() after a transport failure error = %v, want ErrControllerFailed", err)
+	}
+	if fw.requests != 1 {
+		t.Errorf("transport received %d requests, want 1", fw.requests)
 	}
 }
 

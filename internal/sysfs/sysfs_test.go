@@ -271,6 +271,73 @@ func TestWholeDisk(t *testing.T) {
 	}
 }
 
+// addDM adds a device-mapper device whose slaves are the given block
+// devices, and a /dev/mapper link to it.
+func (f *fakeSys) addDM(name, mapperName string, slaves ...string) {
+	dir := path.Join("sys/devices/virtual/block", name)
+	f.link(path.Join("sys/class/block", name), path.Join("../../devices/virtual/block", name))
+	f.file(path.Join(dir, "size"), "0\n")
+	for _, sl := range slaves {
+		f.link(path.Join(dir, "slaves", sl), path.Join("../../../../../sys/class/block", sl))
+	}
+	f.file(path.Join("dev", name), "")
+	f.link(path.Join("dev/mapper", mapperName), "../"+name)
+}
+
+func TestPhysicalDisks(t *testing.T) {
+	f := pveFixture(t)
+	// A multipath device over two paths (sdm and sdn), a partition on it,
+	// and dm-crypt on a partition of sdb.
+	f.addDM("dm-0", "mpatha", "sdm", "sdn")
+	f.addDM("dm-1", "mpatha-part1", "dm-0")
+	f.addDM("dm-2", "crypt", "sdb1")
+	tests := []struct {
+		devPath string
+		want    []string
+	}{
+		{"/dev/sdb9", []string{"sdb"}},
+		{"/dev/mapper/mpatha", []string{"sdm", "sdn"}},
+		{"/dev/mapper/mpatha-part1", []string{"sdm", "sdn"}},
+		{"/dev/mapper/crypt", []string{"sdb"}},
+	}
+	for _, tc := range tests {
+		got, err := PhysicalDisks(f.fsys, tc.devPath)
+		if err != nil {
+			t.Errorf("PhysicalDisks(%q) error: %v", tc.devPath, err)
+			continue
+		}
+		if diff := cmp.Diff(tc.want, got); diff != "" {
+			t.Errorf("PhysicalDisks(%q) mismatch (-want +got):\n%s", tc.devPath, diff)
+		}
+	}
+	if got, err := WholeDisk(f.fsys, "/dev/mapper/mpatha-part1"); err != nil || got != "dm-1" {
+		t.Errorf("WholeDisk(mpatha-part1) = %q, %v, want dm-1", got, err)
+	}
+}
+
+func TestPhysicalDisksCycle(t *testing.T) {
+	f := newFakeSys(t)
+	f.addDM("dm-0", "a", "dm-1")
+	f.addDM("dm-1", "b", "dm-0")
+	if got, err := PhysicalDisks(f.fsys, "/dev/mapper/a"); err == nil {
+		t.Errorf("PhysicalDisks(cycle) = %q, want error", got)
+	}
+}
+
+func TestDiscoverExpander(t *testing.T) {
+	f := pveFixture(t)
+	f.file("sys/devices/pci0000:00/0000:00:01.1/0000:c1:00.0/host0/port-0:9/expander-0:0/sas_device/expander-0:0/sas_address", "0x5\n")
+	got, err := Discover(f.fsys)
+	if err != nil {
+		t.Fatalf("Discover() error: %v", err)
+	}
+	for _, h := range got {
+		if want := h.Number == 0; h.HasExpander != want {
+			t.Errorf("Discover() host%d HasExpander = %t, want %t", h.Number, h.HasExpander, want)
+		}
+	}
+}
+
 func TestWholeDiskErrors(t *testing.T) {
 	f := pveFixture(t)
 	for _, devPath := range []string{

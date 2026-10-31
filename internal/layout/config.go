@@ -16,6 +16,7 @@ import (
 	"unicode"
 
 	"github.com/BurntSushi/toml"
+	"golang.org/x/sys/unix"
 )
 
 // DefaultPath is the configuration file used when none is specified.
@@ -302,15 +303,53 @@ func quote(s string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
 
-// Save writes the configuration to path. An existing file is first copied to
-// a timestamped backup, whose path is returned ("" if there was no existing
-// file).
-func (c *Config) Save(path string) (backup string, err error) {
+// Update applies change to the configuration at path and saves the result.
+// The file is re-read under a lock, so a change made by another gdiskmap
+// command since the caller loaded the configuration is kept rather than
+// overwritten. If change returns an error nothing is written. An existing
+// file is first copied to a timestamped backup, whose path is returned (""
+// if there was no existing file).
+func Update(path string, change func(*Config) error) (backup string, err error) {
+	unlock, err := lockDir(filepath.Dir(path))
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	c, err := Load(path)
+	if err != nil {
+		return "", err
+	}
+	if err := change(c); err != nil {
+		return "", err
+	}
+	return c.save(path)
+}
+
+// lockDir takes an exclusive advisory lock on the directory dir, blocking
+// until it is available. The directory is locked rather than the file
+// because the file may not exist yet, and because save replaces the file
+// (and so its inode) on every write; locking the directory needs no extra
+// lock file.
+func lockDir(dir string) (unlock func(), err error) {
+	f, err := os.Open(dir)
+	if err != nil {
+		return nil, fmt.Errorf("locking %s: %w", dir, err)
+	}
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("locking %s: %w", dir, err)
+	}
+	// Closing the descriptor releases the lock.
+	return func() { f.Close() }, nil
+}
+
+// save writes the configuration to path, as Update describes. The caller
+// must hold the directory lock.
+func (c *Config) save(path string) (backup string, err error) {
 	existing, err := os.ReadFile(path)
 	switch {
 	case err == nil:
-		backup = fmt.Sprintf("%s.%s.bak", path, time.Now().Format("20060102T150405"))
-		if err := os.WriteFile(backup, existing, 0o644); err != nil {
+		if backup, err = writeBackup(path, existing); err != nil {
 			return "", fmt.Errorf("backing up %s: %w", path, err)
 		}
 	case !errors.Is(err, fs.ErrNotExist):
@@ -318,24 +357,81 @@ func (c *Config) Save(path string) (backup string, err error) {
 	}
 	// Write to a temporary file in the same directory and rename it over the
 	// original, so a failed write never leaves a truncated configuration.
+	// Each step is synced so that a power loss after a successful save
+	// leaves either the old or the new file, never an empty one.
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp*")
 	if err != nil {
 		return "", err
 	}
 	defer os.Remove(tmp.Name()) // Fails harmlessly after a successful rename.
-	if _, err := tmp.WriteString(c.Encode()); err != nil {
-		tmp.Close()
-		return "", err
-	}
-	if err := tmp.Chmod(0o644); err != nil {
-		tmp.Close()
-		return "", err
-	}
-	if err := tmp.Close(); err != nil {
+	if err := writeAndSync(tmp, []byte(c.Encode())); err != nil {
 		return "", err
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
 		return "", err
 	}
+	if err := syncDir(filepath.Dir(path)); err != nil {
+		return "", err
+	}
 	return backup, nil
+}
+
+// maxBackupsPerSecond bounds the suffixes writeBackup tries when backups
+// made within the same second collide.
+const maxBackupsPerSecond = 100
+
+// writeBackup writes data to a new backup file next to path, named after the
+// current time (with a numeric suffix if that name is taken), and returns its
+// name. An existing backup is never overwritten.
+func writeBackup(path string, data []byte) (string, error) {
+	base := fmt.Sprintf("%s.%s", path, time.Now().Format("20060102T150405"))
+	for n := range maxBackupsPerSecond {
+		name := base + ".bak"
+		if n > 0 {
+			name = fmt.Sprintf("%s.%d.bak", base, n)
+		}
+		f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		if err := writeAndSync(f, data); err != nil {
+			os.Remove(name) // The incomplete backup is this call's own file.
+			return "", err
+		}
+		return name, syncDir(filepath.Dir(path))
+	}
+	return "", fmt.Errorf("more than %d backups of %s in one second", maxBackupsPerSecond, path)
+}
+
+// writeAndSync writes data to f, sets its mode to 0644, syncs it and closes
+// it.
+func writeAndSync(f *os.File, data []byte) error {
+	_, err := f.Write(data)
+	if err == nil {
+		err = f.Chmod(0o644)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	return err
+}
+
+// syncDir syncs the directory dir, making a file created or renamed in it
+// durable.
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	err = d.Sync()
+	if closeErr := d.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }

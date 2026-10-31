@@ -74,11 +74,13 @@ type system struct {
 	controllers map[int]*mpt.Controller // Open controllers, by host number.
 	enclosures  map[int][]mpt.Enclosure // Firmware enclosure lists, by host number.
 	zpoolJSON   []byte                  // Raw `zpool status -j` output, if read.
+	unlockLEDs  func()                  // Releases the LED lock, if held.
 }
 
 // gatherOptions selects the optional parts of gathering.
 type gatherOptions struct {
-	// needControllers makes failure to open any controller an error.
+	// needControllers makes failure to open any controller an error, and
+	// takes the LED lock (see lockLEDs) for the life of the system.
 	needControllers bool
 	// readLEDs reads the LED state of every slot.
 	readLEDs bool
@@ -117,7 +119,7 @@ func gather(e *env, fsys fs.ReadLinkFS, opts gatherOptions) (*system, error) {
 	}
 	if poolsKnown {
 		src.Vdevs = vdevs
-		src.WholeDisk = sys.wholeDisk
+		src.PhysicalDisks = sys.physicalDisks
 	}
 	sys.inv = inventory.Build(src)
 	if opts.readLEDs {
@@ -148,6 +150,13 @@ func (sys *system) openControllers(e *env, hosts []sysfs.Host, required bool) er
 		return nil
 	}
 
+	if required {
+		unlock, err := lockLEDs(e)
+		if err != nil {
+			return err
+		}
+		sys.unlockLEDs = unlock
+	}
 	for _, h := range hosts {
 		c, err := mpt.Open(h.Driver, h.IOC)
 		if err != nil {
@@ -263,8 +272,15 @@ func (sys *system) allSlots() []*inventory.Slot {
 // requests addressed by device handle and accepts, but ignores, write-status
 // requests addressed that way (sas2ircu also uses enclosure/slot). The
 // device handle is used only when the enclosure handle is unknown, i.e. the
-// enclosure list could not be read from the firmware.
+// enclosure list could not be read from the firmware; on such firmware the
+// status read then fails and mpt.Controller.SetIndicator writes nothing.
+//
+// A slot the controller places more than one device in has no address: its
+// slot table is wrong, so its LED could mark a bay other than the disk's.
 func (sys *system) address(s *inventory.Slot) (mpt.SlotAddress, error) {
+	if s.Conflict {
+		return mpt.SlotAddress{}, fmt.Errorf("%s: the controller reports more than one device in this slot, so its LED could mark the wrong bay; its slot table (NVDATA) needs fixing first", s.DefaultLabel)
+	}
 	if s.Enclosure >= 0 && s.Number >= 0 {
 		enc := sys.inv.Controllers[s.Controller].Enclosures[s.Enclosure]
 		if enc.FromFirmware {
@@ -290,10 +306,17 @@ func (sys *system) wholeDisk(devPath string) (string, error) {
 	return sysfs.WholeDisk(sys.fsys, devPath)
 }
 
-// close releases the open controllers.
+func (sys *system) physicalDisks(devPath string) ([]string, error) {
+	return sysfs.PhysicalDisks(sys.fsys, devPath)
+}
+
+// close releases the open controllers and the LED lock.
 func (sys *system) close() {
 	for _, c := range sys.controllers {
 		c.Close()
+	}
+	if sys.unlockLEDs != nil {
+		sys.unlockLEDs()
 	}
 }
 

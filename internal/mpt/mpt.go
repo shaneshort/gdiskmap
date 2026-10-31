@@ -153,9 +153,34 @@ type transport interface {
 	close() error
 }
 
+// ErrControllerFailed is returned (wrapped) for every request after a
+// request to the same controller failed in the transport, e.g. with an ioctl
+// error or a timeout.
+var ErrControllerFailed = errors.New("an earlier request to the controller failed, so no further requests are sent to it")
+
 // Controller sends requests to one controller.
 type Controller struct {
 	t transport
+	// failed holds the first transport failure. mpt3sas resets the
+	// controller when a passthrough request times out, so after any
+	// transport failure the controller's state is unknown and no further
+	// requests are sent; a fresh discovery (a new gdiskmap run) is needed.
+	failed error
+}
+
+// submit sends a request through the transport unless an earlier request
+// failed there. Firmware replies with a failing IOCStatus are not transport
+// failures and do not stop further requests.
+func (c *Controller) submit(frame, dataIn []byte) ([]byte, error) {
+	if c.failed != nil {
+		return nil, fmt.Errorf("%w (%w)", ErrControllerFailed, c.failed)
+	}
+	reply, err := c.t.submit(frame, dataIn)
+	if err != nil {
+		c.failed = err
+		return nil, err
+	}
+	return reply, nil
 }
 
 // DevicePath returns the ctl device for controllers using the given sysfs
@@ -194,7 +219,7 @@ func (c *Controller) Close() error {
 // own virtual enclosure on direct-attach backplanes.
 func (c *Controller) Enclosures() ([]Enclosure, error) {
 	hdr := pageHeader{version: enclosurePage0Version, pageType: pageTypeExtended}
-	reply, err := c.t.submit(encodeEnclosureRequest(configActionPageHeader, hdr, 0, 0), nil)
+	reply, err := c.submit(encodeEnclosureRequest(configActionPageHeader, hdr, 0, 0), nil)
 	if err != nil {
 		return nil, fmt.Errorf("reading enclosure page header: %w", err)
 	}
@@ -212,7 +237,7 @@ func (c *Controller) Enclosures() ([]Enclosure, error) {
 	for range maxEnclosures {
 		data := make([]byte, int(extLen)*4)
 		req := encodeEnclosureRequest(configActionReadCurrent, hdr, extLen, enclosureFormGetNextHandle|uint32(handle))
-		reply, err := c.t.submit(req, data)
+		reply, err := c.submit(req, data)
 		if err != nil {
 			return nil, fmt.Errorf("reading enclosure page 0: %w", err)
 		}
@@ -238,7 +263,7 @@ func (c *Controller) Enclosures() ([]Enclosure, error) {
 
 // SlotStatus reads the current status word of a slot.
 func (c *Controller) SlotStatus(a SlotAddress) (SlotStatus, error) {
-	reply, err := c.t.submit(encodeSEPRequest(sepActionReadStatus, a, 0), nil)
+	reply, err := c.submit(encodeSEPRequest(sepActionReadStatus, a, 0), nil)
 	if err != nil {
 		return 0, fmt.Errorf("reading status of %v: %w", a, err)
 	}
@@ -250,7 +275,7 @@ func (c *Controller) SlotStatus(a SlotAddress) (SlotStatus, error) {
 
 // SetSlotStatus replaces the status word of a slot.
 func (c *Controller) SetSlotStatus(a SlotAddress, s SlotStatus) error {
-	reply, err := c.t.submit(encodeSEPRequest(sepActionWriteStatus, a, s), nil)
+	reply, err := c.submit(encodeSEPRequest(sepActionWriteStatus, a, s), nil)
 	if err != nil {
 		return fmt.Errorf("writing status of %v: %w", a, err)
 	}
@@ -260,30 +285,20 @@ func (c *Controller) SetSlotStatus(a SlotAddress, s SlotStatus) error {
 	return nil
 }
 
-// ErrStatusNotPreserved is returned (wrapped) by SetIndicator when the slot's
-// current status could not be read, so the write may have cleared other
-// indicators on the slot. The requested indicator was still set.
-var ErrStatusNotPreserved = errors.New("current slot status unreadable; other indicators on the slot may have been cleared")
-
 // SetIndicator turns the indicator bits in flag on or off while preserving
 // the slot's other status bits. A write replaces the whole status word, so
-// the current status is read first.
+// the current status is read first. If the read fails nothing is written:
+// writing without it could clear another indicator, e.g. a fault LED.
 func (c *Controller) SetIndicator(a SlotAddress, flag SlotStatus, on bool) error {
-	cur, readErr := c.SlotStatus(a)
-	if readErr != nil {
-		cur = 0
+	cur, err := c.SlotStatus(a)
+	if err != nil {
+		return err
 	}
 	next := cur &^ flag
 	if on {
 		next |= flag
 	}
-	if err := c.SetSlotStatus(a, next); err != nil {
-		return err
-	}
-	if readErr != nil {
-		return fmt.Errorf("%w (%w)", ErrStatusNotPreserved, readErr)
-	}
-	return nil
+	return c.SetSlotStatus(a, next)
 }
 
 // pageHeader is MPI2_CONFIG_PAGE_HEADER.

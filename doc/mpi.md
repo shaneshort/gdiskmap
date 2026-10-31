@@ -58,8 +58,18 @@ identify bit added (e.g. `0x00000080` becomes `0x00020080`).
 
 A write replaces the whole status word, so gdiskmap reads the status first
 and changes only the identify (`0x00020000`) or predicted-fault (`0x40`)
-bit. If the read fails, the write still happens and a warning says other
-indicators on the slot may have been cleared.
+bit. If the read fails, nothing is written and the command reports the
+error: writing without the current status could clear another indicator,
+such as a fault LED. On SAS2 IT firmware this means a disk addressed by
+device handle (because the enclosure list could not be read) cannot have its
+LED changed, which is reported as a failure rather than a success the
+firmware would ignore.
+
+LED commands and calibration hold an exclusive lock
+(`/run/lock/gdiskmap.lock`) while they run, so two gdiskmap processes never
+interleave their read-modify-write sequences. A second command waits, with a
+note, until the first finishes; during calibration that is the whole
+session. Other tools, such as `sas2ircu`, do not take the lock.
 
 Nothing that writes firmware, NVDATA or persistent configuration can be
 built; there is no general passthrough.
@@ -71,4 +81,11 @@ built; there is no general passthrough.
   disk on it. These requests normally complete in milliseconds, and
   `sas2ircu` is exposed to the same behaviour, but it is the reason
   gdiskmap sends no request it does not need.
+- After any transport failure (an ioctl error, including a timeout), gdiskmap
+  sends no further request to that controller for the rest of the command,
+  because the controller may be resetting. Requests the firmware completes
+  with a failing IOCStatus are ordinary errors and do not stop later
+  requests.
+- A slot the controller reports more than one device in has a wrong slot
+  table, so gdiskmap does not address its LED at all (see the README).
 - The ctl devices are root-only (mode 0600).

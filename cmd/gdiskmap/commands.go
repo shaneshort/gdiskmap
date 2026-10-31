@@ -13,6 +13,7 @@ import (
 
 	"github.com/shaneshort/gdiskmap/internal/capture"
 	"github.com/shaneshort/gdiskmap/internal/inventory"
+	"github.com/shaneshort/gdiskmap/internal/layout"
 	"github.com/shaneshort/gdiskmap/internal/mpt"
 	"github.com/shaneshort/gdiskmap/internal/output"
 )
@@ -69,26 +70,19 @@ func cmdLED(e *env, args []string, name string, indicator mpt.SlotStatus) error 
 		return err
 	}
 	defer sys.close()
+	sys.printWarnings(e)
 	slots, err := sys.inv.Select(args[1:], sys.wholeDisk)
 	if err != nil {
 		return err
 	}
-	failed, notPreserved := 0, 0
+	failed := 0
 	for _, s := range slots {
 		if err := setIndicator(sys, s, indicator, on); err != nil {
-			if !errors.Is(err, mpt.ErrStatusNotPreserved) {
-				fmt.Fprintf(e.stderr, "gdiskmap: %s: %v\n", describeSlot(s), err)
-				failed++
-				continue
-			}
-			notPreserved++
+			fmt.Fprintf(e.stderr, "gdiskmap: %s: %v\n", describeSlot(s), err)
+			failed++
+			continue
 		}
 		fmt.Fprintf(e.stdout, "%s: %s %s\n", describeSlot(s), name, args[0])
-	}
-	if notPreserved > 0 {
-		// Firmware that rejects SEP read-status requests leaves no way to
-		// preserve the slot's other bits; sas2ircu behaves the same way.
-		fmt.Fprintf(e.stderr, "gdiskmap: warning: the controller cannot report LED state, so setting the %s LED cleared any other indicator on %d slot(s)\n", name, notPreserved)
 	}
 	if failed > 0 {
 		return fmt.Errorf("%d of %d slots failed", failed, len(slots))
@@ -156,37 +150,55 @@ func cmdUnusable(e *env, args []string) error {
 		return err
 	}
 	defer sys.close()
+	sys.printWarnings(e)
 	slots, err := sys.inv.Select(fl.Args(), sys.wholeDisk)
 	if err != nil {
 		return err
 	}
+	type mark struct {
+		id   uint64
+		slot int
+	}
+	var marks []mark
 	for _, s := range slots {
 		if s.Enclosure < 0 {
 			return fmt.Errorf("%s has no known slot to mark", describeSlot(s))
 		}
-		id := sys.inv.Controllers[s.Controller].Enclosures[s.Enclosure].ID
-		if on {
-			if err := sys.cfg.SetUnusable(id, s.Number, *reason); err != nil {
+		marks = append(marks, mark{sys.inv.Controllers[s.Controller].Enclosures[s.Enclosure].ID, s.Number})
+	}
+	backup, err := layout.Update(e.configPath, func(c *layout.Config) error {
+		for _, m := range marks {
+			if !on {
+				c.ClearUnusable(m.id, m.slot)
+				continue
+			}
+			if err := c.SetUnusable(m.id, m.slot, *reason); err != nil {
 				return err
 			}
-			if s.Disk != nil {
-				fmt.Fprintf(e.stderr, "gdiskmap: warning: %s holds a disk\n", describeSlot(s))
-			}
-		} else {
-			sys.cfg.ClearUnusable(id, s.Number)
 		}
-		fmt.Fprintf(e.stdout, "%s: unusable %s\n", describeSlot(s), args[0])
-	}
-	backup, err := sys.cfg.Save(e.configPath)
+		return nil
+	})
 	if err != nil {
 		return err
 	}
+	for _, s := range slots {
+		fmt.Fprintf(e.stdout, "%s: unusable %s\n", describeSlot(s), args[0])
+		if on && s.Disk != nil {
+			fmt.Fprintf(e.stderr, "gdiskmap: warning: %s holds a disk\n", describeSlot(s))
+		}
+	}
+	reportSaved(e, backup)
+	return nil
+}
+
+// reportSaved tells the user the config was saved, and where the previous
+// version was kept.
+func reportSaved(e *env, backup string) {
 	if backup != "" {
 		fmt.Fprintf(e.stdout, "Saved %s (previous version kept as %s).\n", e.configPath, backup)
 	} else {
 		fmt.Fprintf(e.stdout, "Saved %s.\n", e.configPath)
 	}
-	return nil
 }
 
 // cmdDump implements `gdiskmap dump`.

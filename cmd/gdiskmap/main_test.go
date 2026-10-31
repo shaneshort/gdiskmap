@@ -247,6 +247,7 @@ func TestAddress(t *testing.T) {
 		{"occupied, derived enclosure", inventory.Slot{Controller: 1, Enclosure: 0, Number: 2, Disk: disk}, mpt.DeviceAddress(0x0e), false},
 		{"unplaced disk", inventory.Slot{Controller: 1, Enclosure: -1, Number: -1, Disk: disk}, mpt.DeviceAddress(0x0e), false},
 		{"empty, derived enclosure", inventory.Slot{Controller: 1, Enclosure: 0, Number: 3}, mpt.SlotAddress{}, true},
+		{"conflicting slot", inventory.Slot{Controller: 0, Enclosure: 0, Number: 2, Disk: disk, Conflict: true}, mpt.SlotAddress{}, true},
 	}
 	for _, tc := range tests {
 		got, err := sys.address(&tc.slot)

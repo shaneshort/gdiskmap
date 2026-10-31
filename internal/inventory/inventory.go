@@ -76,6 +76,10 @@ type Slot struct {
 	// Number is the slot number, or -1 for an unplaced device.
 	Number int   `json:"number"`
 	Disk   *Disk `json:"disk,omitempty"`
+	// Conflict reports that the controller places more than one device in
+	// the slot, so its slot table is wrong and the slot's LED cannot be
+	// trusted to mark any of them. Such a slot appears once per device.
+	Conflict bool `json:"conflict,omitempty"`
 	// Unusable reports that the layout config marks the slot as unusable
 	// (e.g. a faulty backplane connector), for UnusableReason.
 	Unusable       bool   `json:"unusable,omitempty"`
@@ -121,9 +125,10 @@ type Sources struct {
 	Enclosures map[int][]mpt.Enclosure
 	// Vdevs lists the leaf vdevs of the imported pools, if known.
 	Vdevs []zfs.Vdev
-	// WholeDisk resolves a vdev path to a whole-disk block device name. If
-	// nil, pool membership is not determined.
-	WholeDisk func(devPath string) (string, error)
+	// PhysicalDisks resolves a vdev path to the whole-disk block devices it
+	// is stored on (several for a multipath device). If nil, pool
+	// membership is not determined.
+	PhysicalDisks func(devPath string) ([]string, error)
 	// Layout supplies bay labels. It may be nil.
 	Layout *layout.Config
 }
@@ -154,6 +159,17 @@ func Build(src Sources) *Inventory {
 				if e.NumSlots == 0 {
 					continue
 				}
+				if h.HasExpander && e.LogicalID != h.SASAddress {
+					// The enclosures behind an expander are listed by the
+					// firmware, but their devices are not read, so every
+					// slot would wrongly appear empty. Only the
+					// controller's own enclosure, whose logical ID is the
+					// controller's SAS address, is direct-attached.
+					inv.Warnings = append(inv.Warnings, fmt.Sprintf(
+						"%s: enclosure %s is behind a SAS expander, which gdiskmap does not support; its slots are not shown",
+						c.Name, layout.FormatID(e.LogicalID)))
+					continue
+				}
 				c.Enclosures = append(c.Enclosures, Enclosure{
 					ID: e.LogicalID, Handle: e.Handle,
 					StartSlot: int(e.StartSlot), NumSlots: int(e.NumSlots), FromFirmware: true,
@@ -165,9 +181,9 @@ func Build(src Sources) *Inventory {
 		inv.Controllers = append(inv.Controllers, c)
 		inv.placeDevices(ci, h, src.Layout)
 	}
-	if src.WholeDisk != nil {
+	if src.PhysicalDisks != nil {
 		inv.PoolsKnown = true
-		inv.addPoolMembership(src.Vdevs, src.WholeDisk)
+		inv.addPoolMembership(src.Vdevs, src.PhysicalDisks)
 	}
 	if slices.ContainsFunc(inv.Slots, func(s Slot) bool { return s.Label != s.DefaultLabel }) {
 		// Unlabelled slots ("c0:s3") sort after numeric bay labels.
@@ -233,8 +249,12 @@ func (inv *Inventory) placeDevices(ci int, h sysfs.Host, cfg *layout.Config) {
 					inv.Slots = append(inv.Slots, slot)
 				}
 			case len(names) > 1:
+				// The slots for this slot number are the last ones added.
+				for i := len(inv.Slots) - len(names); i < len(inv.Slots); i++ {
+					inv.Slots[i].Conflict = true
+				}
 				inv.Warnings = append(inv.Warnings, fmt.Sprintf(
-					"%s: the controller reports %d devices in this slot (%s); its slot table is probably wrong, so slot numbers and LEDs for these disks are unreliable",
+					"%s: the controller reports %d devices in this slot (%s); its slot table is probably wrong, so slot numbers for these disks are unreliable and their LEDs are not used",
 					slot.DefaultLabel, len(names), strings.Join(names, ", ")))
 			}
 		}
@@ -281,10 +301,11 @@ func newDisk(h sysfs.Host, d sysfs.Device) *Disk {
 	return disk
 }
 
-// addPoolMembership attaches each vdev to the disk holding it. Vdevs whose
-// path no longer resolves to a device are listed as missing; vdevs on
-// devices not attached to an HBA are ignored.
-func (inv *Inventory) addPoolMembership(vdevs []zfs.Vdev, wholeDisk func(string) (string, error)) {
+// addPoolMembership attaches each vdev to the disks holding it (every path
+// of a multipath device). Vdevs whose path no longer resolves to a device
+// are listed as missing; vdevs on devices not attached to an HBA are
+// ignored.
+func (inv *Inventory) addPoolMembership(vdevs []zfs.Vdev, physicalDisks func(string) ([]string, error)) {
 	byBlock := make(map[string]*Disk)
 	for _, list := range [][]Slot{inv.Slots, inv.Unplaced} {
 		for _, s := range list {
@@ -297,13 +318,15 @@ func (inv *Inventory) addPoolMembership(vdevs []zfs.Vdev, wholeDisk func(string)
 		if v.Path == "" {
 			continue
 		}
-		block, err := wholeDisk(v.Path)
+		blocks, err := physicalDisks(v.Path)
 		if err != nil {
 			inv.Missing = append(inv.Missing, v)
 			continue
 		}
-		if d, ok := byBlock[block]; ok {
-			d.Vdevs = append(d.Vdevs, v)
+		for _, b := range blocks {
+			if d, ok := byBlock[b]; ok {
+				d.Vdevs = append(d.Vdevs, v)
+			}
 		}
 	}
 }

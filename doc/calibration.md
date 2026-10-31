@@ -35,15 +35,27 @@ At each prompt, answer with:
 Bay numbers must be non-negative integers and unique across the whole
 config. Text labels such as `A3` can be set by editing the config afterwards.
 
-When calibration finishes, the result is printed and you are asked before
-anything is written. Saving replaces all existing labels of the calibrated
-enclosures and keeps a timestamped backup of the previous file
-(`/etc/gdiskmap.toml.<timestamp>.bak`). Labels of other enclosures are kept,
-and their bay numbers cannot be reused.
+When calibration finishes, the result is printed and checked against the
+config, and you are asked before anything is written. Saving replaces all
+existing labels of the calibrated enclosures (a label may move from one
+calibrated enclosure to another) and keeps a timestamped backup of the
+previous file (`/etc/gdiskmap.toml.<timestamp>.bak`). Labels of other
+enclosures are kept, and their bay numbers cannot be reused. The config is
+re-read when saving, so an unusable mark another command added meanwhile is
+kept.
+
+Calibration holds the LED lock (see [mpi.md](mpi.md)) for its whole run, so
+other gdiskmap LED commands wait until it ends.
 
 Interrupting with Ctrl-C turns the lit LED off and saves nothing. The
 identify LED of every calibrated slot is off when calibration ends, even if
 it was on before.
+
+Calibration depends on exactly one known slot being lit at each prompt, so
+it stops, saving nothing, if an LED cannot be turned off or a request to the
+controller fails in the transport. The error names any slot still lit and
+the command that turns it off. The one exception is a slot whose firmware
+rejects the request to light it: no LED is on, so that slot is skipped.
 
 ## How the pattern is inferred
 
@@ -65,7 +77,8 @@ in bay `base + step × i`, where `step` is +1 or −1.
    learns its pattern afresh.
 
 Empty slots are not shown (unless `-light-empty` is given), and neither are
-slots marked unusable (see the README). They are filled in from the pattern
+slots marked unusable (see the README) or slots the controller reports more
+than one device in. They are filled in from the pattern
 of their group once it has been confirmed on other slots, and the result
 marks them "(not lit, inferred)". Recalibrating keeps unusable marks. A group with no
 occupied slot cannot be confirmed, so its slots stay unmapped; label them by

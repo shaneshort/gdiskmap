@@ -63,6 +63,19 @@ func fakeWholeDisk(devPath string) (string, error) {
 	return "", fs.ErrNotExist
 }
 
+// fakePhysicalDisks resolves the by-id paths used in the tests, and
+// /dev/mapper/mpatha as a multipath device over sdm and sdn.
+func fakePhysicalDisks(devPath string) ([]string, error) {
+	if devPath == "/dev/mapper/mpatha" {
+		return []string{"sdm", "sdn"}, nil
+	}
+	d, err := fakeWholeDisk(devPath)
+	if err != nil {
+		return nil, err
+	}
+	return []string{d}, nil
+}
+
 func testInventory(t *testing.T) *Inventory {
 	t.Helper()
 	cfg := &layout.Config{}
@@ -80,8 +93,8 @@ func testInventory(t *testing.T) *Inventory {
 			{Pool: "rpool", Parent: "mirror-0", Name: "5587783532978086300", Path: "/dev/disk/by-id/ata-INTEL_SSDSC2KG240G8_PHYG006400D2240AGN-part3", State: "UNAVAIL"},
 			{Pool: "rpool", Parent: "mirror-0", Name: "nvme-onboard", Path: "/dev/disk/by-id/nvme-onboard", State: "ONLINE"},
 		},
-		WholeDisk: fakeWholeDisk,
-		Layout:    cfg,
+		PhysicalDisks: fakePhysicalDisks,
+		Layout:        cfg,
 	})
 }
 
@@ -92,10 +105,11 @@ func TestBuild(t *testing.T) {
 		Label, Default, Block string
 		Pools                 int
 		LinkErrors            uint64
+		Conflict              bool
 	}
 	var got []row
 	for _, s := range inv.Slots {
-		r := row{Label: s.Label, Default: s.DefaultLabel}
+		r := row{Label: s.Label, Default: s.DefaultLabel, Conflict: s.Conflict}
 		if s.Disk != nil {
 			r.Block, r.Pools, r.LinkErrors = s.Disk.Block, len(s.Disk.Vdevs), s.Disk.LinkErrors
 		}
@@ -112,8 +126,8 @@ func TestBuild(t *testing.T) {
 		{Label: "c0:s5", Default: "c0:s5"},
 		{Label: "c0:s6", Default: "c0:s6"},
 		{Label: "c0:s7", Default: "c0:s7"},
-		{Label: "c1:s30", Default: "c1:s30", Block: "sdm", Pools: 1},
-		{Label: "c1:s30", Default: "c1:s30", Block: "sdn"},
+		{Label: "c1:s30", Default: "c1:s30", Block: "sdm", Pools: 1, Conflict: true},
+		{Label: "c1:s30", Default: "c1:s30", Block: "sdn", Conflict: true},
 		{Label: "front-5", Default: "c0:s4", Block: "sdh", LinkErrors: 10924},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
@@ -150,6 +164,52 @@ func TestBuildMultipleEnclosures(t *testing.T) {
 	}
 	if diff := cmp.Diff([]string{"c0:e0:s0", "c0:e1:s0"}, got); diff != "" {
 		t.Errorf("Build() default labels mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestBuildExpander(t *testing.T) {
+	inv := Build(Sources{
+		Hosts: []sysfs.Host{{
+			Number: 0, Driver: sysfs.DriverSAS3, IOC: 0, SASAddress: 1, HasExpander: true,
+			Devices: []sysfs.Device{{EndDevice: "end_device-0:0", EnclosureID: 1, Bay: 0, Block: "sda"}},
+		}},
+		Enclosures: map[int][]mpt.Enclosure{0: {
+			{Handle: 1, LogicalID: 1, StartSlot: 0, NumSlots: 2},
+			{Handle: 2, LogicalID: 2, StartSlot: 0, NumSlots: 12}, // Behind the expander.
+		}},
+	})
+	var got []string
+	for _, s := range inv.Slots {
+		got = append(got, s.DefaultLabel)
+	}
+	// The expander's enclosure would otherwise show twelve empty slots.
+	if diff := cmp.Diff([]string{"c0:s0", "c0:s1"}, got); diff != "" {
+		t.Errorf("Build() slots mismatch (-want +got):\n%s", diff)
+	}
+	if len(inv.Warnings) != 1 || !strings.Contains(inv.Warnings[0], "expander") {
+		t.Errorf("Build() warnings = %q, want one about the expander", inv.Warnings)
+	}
+}
+
+func TestBuildMultipath(t *testing.T) {
+	inv := Build(Sources{
+		Hosts: testHosts(),
+		Vdevs: []zfs.Vdev{
+			{Pool: "tank", Name: "mpatha", Path: "/dev/mapper/mpatha", State: "ONLINE"},
+		},
+		PhysicalDisks: fakePhysicalDisks,
+	})
+	for _, s := range inv.Slots {
+		if s.Disk == nil {
+			continue
+		}
+		want := 0
+		if s.Disk.Block == "sdm" || s.Disk.Block == "sdn" {
+			want = 1
+		}
+		if got := len(s.Disk.Vdevs); got != want {
+			t.Errorf("Build() %s has %d vdevs, want %d", s.Disk.Block, got, want)
+		}
 	}
 }
 

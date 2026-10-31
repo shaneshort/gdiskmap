@@ -33,6 +33,7 @@ func cmdCalibrate(e *env, args []string) error {
 		return err
 	}
 	defer sys.close()
+	sys.printWarnings(e)
 
 	targets, err := calibrationTargets(sys.inv, fl.Args())
 	if err != nil {
@@ -44,8 +45,10 @@ func cmdCalibrate(e *env, args []string) error {
 		encls[i] = layout.CalibrationEnclosure{ID: t.enc.ID, Slots: t.slots, Hidden: make(map[int]bool)}
 		for _, n := range t.slots {
 			s := findSlot(sys.inv, t.controller, t.enclosure, n)
-			// Unusable bays are never lit; empty ones only with -light-empty.
-			if s == nil || s.Unusable || (s.Disk == nil && !*lightEmpty) {
+			// Unusable bays and slots whose controller reports several
+			// devices (see inventory.Slot.Conflict) are never lit; empty
+			// ones only with -light-empty.
+			if s == nil || s.Unusable || s.Conflict || (s.Disk == nil && !*lightEmpty) {
 				encls[i].Hidden[n] = true
 			}
 		}
@@ -69,8 +72,8 @@ func cmdCalibrate(e *env, args []string) error {
 	if !*lightEmpty {
 		fmt.Fprintln(e.stdout, "Empty slots are not lit; their bays are inferred from the pattern (use -light-empty if your backplane lights empty bays).")
 	}
-	if slices.ContainsFunc(sys.inv.Slots, func(s inventory.Slot) bool { return s.Unusable }) {
-		fmt.Fprintln(e.stdout, "Slots marked unusable are not lit; their bays are inferred from the pattern.")
+	if slices.ContainsFunc(sys.inv.Slots, func(s inventory.Slot) bool { return s.Unusable || s.Conflict }) {
+		fmt.Fprintln(e.stdout, "Slots marked unusable, and slots the controller reports more than one device in, are not lit; their bays are inferred from the pattern.")
 	}
 	p := newTerminalPrompter(e, sys, targets)
 	p.start()
@@ -109,28 +112,36 @@ func cmdCalibrate(e *env, args []string) error {
 		fmt.Fprintln(e.stdout, "Nothing to save.")
 		return nil
 	}
+	// All the calibrated enclosures' labels are cleared before any is set,
+	// so a bay label may move from one calibrated enclosure to another.
+	apply := func(c *layout.Config) error {
+		for _, t := range targets {
+			c.ClearLabels(t.enc.ID)
+		}
+		for i, t := range targets {
+			for slot, bay := range result[i] {
+				if err := c.SetLabel(t.enc.ID, slot, strconv.Itoa(bay)); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	// Check the result against the loaded config before asking, so that a
+	// conflict is reported before the user agrees to save.
+	if err := apply(sys.cfg); err != nil {
+		return fmt.Errorf("the result conflicts with %s: %w", e.configPath, err)
+	}
 	ok, err := confirm(e, fmt.Sprintf("Write these labels to %s? Existing labels for these enclosures are replaced. [y/N] ", e.configPath))
 	if err != nil || !ok {
 		fmt.Fprintln(e.stdout, "Not saved.")
 		return err
 	}
-	for i, t := range targets {
-		sys.cfg.ClearLabels(t.enc.ID)
-		for slot, bay := range result[i] {
-			if err := sys.cfg.SetLabel(t.enc.ID, slot, strconv.Itoa(bay)); err != nil {
-				return err
-			}
-		}
-	}
-	backup, err := sys.cfg.Save(e.configPath)
+	backup, err := layout.Update(e.configPath, apply)
 	if err != nil {
 		return err
 	}
-	if backup != "" {
-		fmt.Fprintf(e.stdout, "Saved %s (previous version kept as %s).\n", e.configPath, backup)
-	} else {
-		fmt.Fprintf(e.stdout, "Saved %s.\n", e.configPath)
-	}
+	reportSaved(e, backup)
 	return nil
 }
 
@@ -206,8 +217,10 @@ func (p *terminalPrompter) start() {
 			return
 		}
 		p.mu.Lock()
-		p.unlight()
 		fmt.Fprintln(p.e.stderr, "\ngdiskmap: interrupted; nothing was saved")
+		if err := p.unlight(); err != nil {
+			fmt.Fprintf(p.e.stderr, "gdiskmap: %v\n", err)
+		}
 		os.Exit(130)
 	}()
 }
@@ -218,7 +231,9 @@ func (p *terminalPrompter) stop() {
 	close(p.sigs)
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.unlight()
+	if err := p.unlight(); err != nil {
+		fmt.Fprintf(p.e.stderr, "gdiskmap: %v\n", err)
+	}
 }
 
 // slot returns the inventory slot a calibration reference refers to.
@@ -239,74 +254,96 @@ func findSlot(inv *inventory.Inventory, controller, enclosure, number int) *inve
 	return nil
 }
 
-// light turns on the identify LED of the slot. A failure is reported but
-// does not stop calibration; the user can skip the slot.
-func (p *terminalPrompter) light(s *inventory.Slot) {
+// light turns on the identify LED of the slot, first turning off the one
+// that is lit. On error the LED of s is not on; if the previous LED could not
+// be turned off it is still lit (and p.lit still records it).
+func (p *terminalPrompter) light(s *inventory.Slot) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.unlight()
-	if err := setIndicator(p.sys, s, mpt.StatusIdentify, true); err != nil && !errors.Is(err, mpt.ErrStatusNotPreserved) {
-		fmt.Fprintf(p.e.stderr, "gdiskmap: %s: turning the LED on failed: %v\n", s.DefaultLabel, err)
-		return
+	if err := p.unlight(); err != nil {
+		return err
+	}
+	if err := setIndicator(p.sys, s, mpt.StatusIdentify, true); err != nil {
+		return fmt.Errorf("%s: turning the LED on failed: %w", s.DefaultLabel, err)
 	}
 	p.lit = s
+	return nil
 }
 
-// unlight turns off the lit LED. The caller must hold p.mu.
-func (p *terminalPrompter) unlight() {
+// unlight turns off the lit LED. If that fails, p.lit keeps the slot, so
+// that the user is told which LED is still on. The caller must hold p.mu.
+func (p *terminalPrompter) unlight() error {
 	if p.lit == nil {
-		return
+		return nil
 	}
-	if err := setIndicator(p.sys, p.lit, mpt.StatusIdentify, false); err != nil && !errors.Is(err, mpt.ErrStatusNotPreserved) {
-		fmt.Fprintf(p.e.stderr, "gdiskmap: %s: turning the LED off failed: %v\n", p.lit.DefaultLabel, err)
+	if err := setIndicator(p.sys, p.lit, mpt.StatusIdentify, false); err != nil {
+		return fmt.Errorf("%s: turning the LED off failed (turn it off with `gdiskmap locate off %s`): %w", p.lit.DefaultLabel, p.lit.DefaultLabel, err)
 	}
 	p.lit = nil
+	return nil
 }
 
-func (p *terminalPrompter) done() {
+func (p *terminalPrompter) done() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.unlight()
+	return p.unlight()
+}
+
+// ask lights the slot ref refers to, asks question until parse accepts the
+// answer, and turns the LED off again.
+//
+// Calibration relies on the user seeing exactly the slot being asked about,
+// so an LED that cannot be switched as intended stops it, with one
+// exception: if the firmware rejects the request to light a slot (an
+// IOCStatus error), no LED is on and the slot is skipped.
+func (p *terminalPrompter) ask(ref layout.SlotRef, question func(*inventory.Slot) string, parse func(string) (layout.Response, bool), help string) (r layout.Response, err error) {
+	s := p.slot(ref)
+	if s == nil {
+		return layout.Response{Kind: layout.RespSkip}, nil
+	}
+	if err := p.light(s); err != nil {
+		var se *mpt.IOCStatusError
+		if p.lit == nil && errors.As(err, &se) {
+			p.Notify(fmt.Sprintf("gdiskmap: %v; skipping the slot", err))
+			return layout.Response{Kind: layout.RespSkip}, nil
+		}
+		return layout.Response{}, err
+	}
+	defer func() {
+		if doneErr := p.done(); doneErr != nil {
+			r, err = layout.Response{}, errors.Join(err, doneErr)
+		}
+	}()
+	for {
+		line, err := p.prompt(question(s))
+		if err != nil {
+			return layout.Response{}, err
+		}
+		if r, ok := parse(line); ok {
+			return r, nil
+		}
+		fmt.Fprintln(p.e.stdout, help)
+	}
 }
 
 // AskBay implements layout.Prompter.
 func (p *terminalPrompter) AskBay(ref layout.SlotRef) (layout.Response, error) {
-	s := p.slot(ref)
-	if s == nil {
-		return layout.Response{Kind: layout.RespSkip}, nil
-	}
-	p.light(s)
-	defer p.done()
-	for {
-		line, err := p.prompt(fmt.Sprintf("%s is lit. Bay number? [number/s/q] ", slotSummary(s)))
-		if err != nil {
-			return layout.Response{}, err
-		}
-		if r, ok := parseResponse(line, false); ok {
-			return r, nil
-		}
-		fmt.Fprintln(p.e.stdout, "Enter a bay number, 's' to skip or 'q' to stop.")
-	}
+	return p.ask(ref,
+		func(s *inventory.Slot) string {
+			return fmt.Sprintf("%s is lit. Bay number? [number/s/q] ", slotSummary(s))
+		},
+		func(line string) (layout.Response, bool) { return parseResponse(line, false) },
+		"Enter a bay number, 's' to skip or 'q' to stop.")
 }
 
 // ConfirmBay implements layout.Prompter.
 func (p *terminalPrompter) ConfirmBay(ref layout.SlotRef, predicted int) (layout.Response, error) {
-	s := p.slot(ref)
-	if s == nil {
-		return layout.Response{Kind: layout.RespSkip}, nil
-	}
-	p.light(s)
-	defer p.done()
-	for {
-		line, err := p.prompt(fmt.Sprintf("%s is lit. Is it bay %d? [Y/n/number/s/q] ", slotSummary(s), predicted))
-		if err != nil {
-			return layout.Response{}, err
-		}
-		if r, ok := parseResponse(line, true); ok {
-			return r, nil
-		}
-		fmt.Fprintln(p.e.stdout, "Enter 'y', 'n', the correct bay number, 's' to skip or 'q' to stop.")
-	}
+	return p.ask(ref,
+		func(s *inventory.Slot) string {
+			return fmt.Sprintf("%s is lit. Is it bay %d? [Y/n/number/s/q] ", slotSummary(s), predicted)
+		},
+		func(line string) (layout.Response, bool) { return parseResponse(line, true) },
+		"Enter 'y', 'n', the correct bay number, 's' to skip or 'q' to stop.")
 }
 
 // Notify implements layout.Prompter.

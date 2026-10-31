@@ -134,44 +134,75 @@ func TestEncodeRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSave(t *testing.T) {
+func TestUpdate(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "gdiskmap.toml")
-	c := &Config{}
-	if err := c.SetLabel(0x1, 0, "A1"); err != nil {
-		t.Fatalf("SetLabel() error: %v", err)
+	setLabel := func(slot int, label string) func(*Config) error {
+		return func(c *Config) error { return c.SetLabel(0x1, slot, label) }
 	}
-	backup, err := c.Save(path)
+	backup, err := Update(path, setLabel(0, "A1"))
 	if err != nil {
-		t.Fatalf("Save() error: %v", err)
+		t.Fatalf("Update() error: %v", err)
 	}
 	if backup != "" {
-		t.Errorf("Save() of a new file returned backup %q, want none", backup)
+		t.Errorf("Update() of a new file returned backup %q, want none", backup)
 	}
 	first, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading saved config: %v", err)
 	}
 
-	if err := c.SetLabel(0x1, 1, "A2"); err != nil {
-		t.Fatalf("SetLabel() error: %v", err)
-	}
-	backup, err = c.Save(path)
+	// Two updates within the same second each keep their own backup.
+	backup1, err := Update(path, setLabel(1, "A2"))
 	if err != nil {
-		t.Fatalf("Save() error: %v", err)
+		t.Fatalf("Update() error: %v", err)
 	}
-	saved, err := os.ReadFile(backup)
+	backup2, err := Update(path, setLabel(2, "A3"))
+	if err != nil {
+		t.Fatalf("Update() error: %v", err)
+	}
+	if backup1 == backup2 {
+		t.Fatalf("Update() reused backup name %q", backup1)
+	}
+	saved, err := os.ReadFile(backup1)
 	if err != nil {
 		t.Fatalf("reading backup: %v", err)
 	}
 	if string(saved) != string(first) {
-		t.Errorf("backup content = %q, want %q", saved, first)
+		t.Errorf("first backup content = %q, want %q", saved, first)
 	}
+
+	// Each update starts from the file, so earlier changes are kept.
 	loaded, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load() error: %v", err)
 	}
-	if got, _ := loaded.Label(0x1, 1); got != "A2" {
-		t.Errorf("Load() label = %q, want %q", got, "A2")
+	for slot, want := range []string{"A1", "A2", "A3"} {
+		if got, _ := loaded.Label(0x1, slot); got != want {
+			t.Errorf("Load() slot %d label = %q, want %q", slot, got, want)
+		}
+	}
+
+	// A failing change writes nothing.
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading config: %v", err)
+	}
+	if _, err := Update(path, setLabel(3, "A1")); err == nil {
+		t.Error("Update(duplicate label) error = nil, want error")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading config: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Errorf("failed Update() changed the file:\n%s", after)
+	}
+	matches, err := filepath.Glob(path + ".*.bak")
+	if err != nil {
+		t.Fatalf("listing backups: %v", err)
+	}
+	if len(matches) != 2 {
+		t.Errorf("found backups %q, want 2", matches)
 	}
 }
 

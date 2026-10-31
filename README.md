@@ -103,8 +103,11 @@ Notes on the output:
   phy. Non-zero values point at a bad cable, backplane slot or connector.
 - Pool members whose device does not exist are listed separately, because
   they cannot be placed in a slot.
+- `POOL` follows device-mapper devices (multipath, dm-crypt) down to the
+  disks underneath, so every path of a multipath pool member shows it.
 - Warnings, such as two disks reported in the same slot (a sign of a wrong
-  slot table in the HBA's NVDATA), are printed to stderr.
+  slot table in the HBA's NVDATA), are printed to stderr by `disks`, the LED
+  commands, `calibrate` and `unusable`.
 
 ## Bay labels
 
@@ -141,6 +144,13 @@ writes these entries (flags go before the targets), and
 unusable bay as `(unusable)` and warns about a disk in one, and `calibrate`
 never lights unusable bays.
 
+Every command that writes the config re-reads it under a lock and applies
+only its own change, so concurrent commands do not undo each other. Each
+save first copies the previous file to a new
+`<config>.<timestamp>[.<n>].bak` (an existing backup is never overwritten),
+and the backup and the new file are synced to disk before the command
+reports success.
+
 ## Capturing and replaying
 
 `gdiskmap dump <dir>` copies exactly the sysfs and `/dev` entries gdiskmap
@@ -160,8 +170,15 @@ MPI requests sent through `/dev/mpt2ctl` or `/dev/mpt3ctl`. See
 ## Limitations
 
 - Direct-attach backplanes only. Disks behind SAS expanders are not
-  discovered.
+  discovered. On a controller with an expander, only its own
+  (direct-attached) enclosure is shown and a warning names each enclosure
+  behind the expander; their slots are not listed, so `empty` never selects
+  them.
 - If an HBA's NVDATA carries the wrong slot table, slot numbers are wrong for
   every tool, including this one, and LEDs light the wrong bays. gdiskmap
-  warns about duplicate slots. The fix is to flash the NVDATA that matches
-  the card.
+  warns about duplicate slots and refuses LED commands for them, whichever
+  target selects them (label, device, serial or keyword); calibration does not
+  light them. The fix is to flash the NVDATA that matches the card.
+- LED commands, including `locate off`, need the lock file
+  `/run/lock/gdiskmap.lock`, and wait while another gdiskmap command (such as
+  a calibration) holds it.
